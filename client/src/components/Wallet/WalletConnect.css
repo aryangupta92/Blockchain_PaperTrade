@@ -1,0 +1,92 @@
+.wallet-connect-wrapper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.wallet-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--accent-primary);
+  color: var(--accent-primary);
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.wallet-btn:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.1);
+  box-shadow: 0 0 10px rgba(99, 102, 241, 0.2);
+}
+
+.wallet-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  border-color: var(--border);
+  color: var(--text-muted);
+}
+
+.wallet-err {
+  position: absolute;
+  top: 110%;
+  right: 0;
+  width: 150px;
+  background: var(--loss-bg);
+  border: 1px solid var(--loss);
+  color: var(--loss);
+  font-size: 10px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.wallet-connected {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(38, 166, 154, 0.1);
+  border: 1px solid rgba(38, 166, 154, 0.3);
+  padding: 5px 12px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.wallet-connected:hover {
+  background: rgba(239, 83, 80, 0.1);
+  border-color: rgba(239, 83, 80, 0.3);
+}
+
+.wallet-connected:hover .wallet-addr {
+  display: none;
+}
+.wallet-connected:hover::after {
+  content: 'Disconnect';
+  color: var(--loss);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.wallet-addr {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.wallet-bal {
+  color: var(--gain);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 800;
+  background: rgba(0,0,0,0.3);
+  padding: 2px 6px;
+  border-radius: 4px;
+}

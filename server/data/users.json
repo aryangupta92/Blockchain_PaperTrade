@@ -1,0 +1,61 @@
+{
+  "users": [
+    {
+      "id": "USR-DEMO001",
+      "name": "Demo Trader",
+      "email": "demo@blocktrade.in",
+      "phone": "9999999999",
+      "pan": "ABCDE1234F",
+      "dob": "1995-01-01",
+      "passwordHash": "$2b$10$o1LzHAW6OIEl1gBAy4Dy4eS0vHoh3/RWUJGSavLFb.FJGkybrxfZ6",
+      "kycStatus": "verified",
+      "createdAt": "2026-04-17T07:53:33.218Z",
+      "riskDisclosureAccepted": true,
+      "sebiRegistered": true,
+      "subscription": {
+        "planId": "pro",
+        "planName": "Pro",
+        "purchasedAt": "2026-04-17T07:53:33.223Z",
+        "expiresAt": "2026-05-17T07:53:33.223Z",
+        "virtualBalance": 200000,
+        "initialBalance": 200000,
+        "tradesUsed": 0,
+        "maxTrades": 200,
+        "status": "active",
+        "transactionId": "TXN-DEMO001"
+      },
+      "balance": 200000,
+      "holdings": {},
+      "trades": []
+    },
+    {
+      "id": "USR-1776412553348",
+      "name": "Aryan Gupta",
+      "email": "aryan.gupta9352@gmail.com",
+      "phone": "9887262113",
+      "pan": "dwjkch677E",
+      "dob": "2005-09-29",
+      "passwordHash": "$2b$10$oRHVc5WYNnkXNlommSZxoOC3D4lTkUMVCBFbt8JuE6NpboFve60/y",
+      "kycStatus": "pending",
+      "createdAt": "2026-04-17T07:55:53.348Z",
+      "subscription": {
+        "planId": "expert",
+        "planName": "Expert",
+        "purchasedAt": "2026-04-17T07:56:04.309Z",
+        "expiresAt": "2026-05-17T07:56:04.309Z",
+        "virtualBalance": 1000000,
+        "initialBalance": 1000000,
+        "tradesUsed": 0,
+        "maxTrades": -1,
+        "status": "active",
+        "transactionId": "TXN-1776412564309"
+      },
+      "riskDisclosureAccepted": true,
+      "sebiRegistered": true,
+      "riskDisclosureAt": "2026-04-17T07:55:57.226Z",
+      "balance": 1000000,
+      "holdings": {},
+      "trades": []
+    }
+  ]
+}

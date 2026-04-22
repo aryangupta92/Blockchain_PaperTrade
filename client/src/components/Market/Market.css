@@ -1,0 +1,222 @@
+/* ─── Market Page ────────────────────────────────────────────────────────── */
+.market-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ─── Market Status Bar ───────────────────────────────────────────────────── */
+.market-status-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius-md); padding: 8px 14px;
+}
+.market-status-left { display: flex; align-items: center; gap: 10px; }
+.market-status-right { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 11px; }
+.market-status-indicator {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10.5px; font-weight: 800; letter-spacing: 0.08em;
+  padding: 3px 10px; border-radius: 99px;
+  background: rgba(38,166,154,0.12); color: #26a69a;
+}
+.status-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  animation: pulse-dot 1.5s ease infinite;
+}
+.market-status-reason { font-size: 12px; color: var(--text-muted); font-weight: 500; }
+
+/* ─── Chart Full Screen Button ────────────────────────────────────────────── */
+.chart-fullscreen-btn {
+  position: absolute; top: 10px; right: 10px; z-index: 10;
+  display: flex; align-items: center; gap: 5px;
+  background: rgba(13,17,23,0.85); border: 1px solid rgba(255,255,255,0.1);
+  color: var(--text-secondary); font-size: 11px; font-weight: 600;
+  padding: 5px 10px; border-radius: 6px; cursor: pointer;
+  transition: var(--transition); backdrop-filter: blur(4px);
+}
+.chart-fullscreen-btn:hover { background: var(--accent-primary); color: #fff; border-color: var(--accent-primary); }
+
+/* Hero card full-screen icon */
+.hero-fullscreen {
+  position: absolute; top: 10px; right: 10px;
+  opacity: 0; transition: var(--transition);
+  padding: 3px; border-radius: 4px;
+  background: rgba(0,0,0,0.5); border: none; cursor: pointer; color: var(--text-muted);
+}
+.index-hero-card:hover .hero-fullscreen { opacity: 1; }
+
+/* ─── Index Hero Row ─────────────────────────────────────────────────────── */
+.index-hero-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.index-hero-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  cursor: pointer;
+  transition: var(--transition);
+  position: relative;
+  overflow: hidden;
+}
+
+.index-hero-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent-primary), transparent);
+  opacity: 0;
+  transition: var(--transition);
+}
+
+.index-hero-card:hover, .index-hero-card.active {
+  border-color: var(--border-active);
+  background: var(--bg-card-hover);
+}
+
+.index-hero-card.active::before { opacity: 1; }
+
+.hero-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin-bottom: 6px;
+}
+
+.hero-price {
+  font-size: 22px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.hero-change {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.hero-mini-chart {
+  margin-top: 10px;
+  height: 36px;
+}
+
+/* ─── Market Bottom Row ──────────────────────────────────────────────────── */
+.market-bottom-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+/* ─── Stock Movers ───────────────────────────────────────────────────────── */
+.movers-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.movers-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.movers-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.movers-table th {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-weight: 500;
+  padding: 6px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.movers-table td {
+  padding: 7px 8px;
+  font-size: 12.5px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  color: var(--text-secondary);
+}
+
+.movers-table tr:hover td {
+  background: rgba(255,255,255,0.02);
+}
+
+.movers-table tr:last-child td { border-bottom: none; }
+
+.mover-symbol {
+  font-weight: 700;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.mover-name {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.mover-change-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.mover-change-pill.gain { background: var(--gain-bg); color: var(--gain); }
+.mover-change-pill.loss { background: var(--loss-bg); color: var(--loss); }
+
+/* ─── Sector Indices ─────────────────────────────────────────────────────── */
+.sector-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.sector-row:last-child { border-bottom: none; }
+.sector-row:hover { background: rgba(255,255,255,0.02); border-radius: var(--radius-sm); padding-left: 6px; }
+
+.sector-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.sector-price {
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+@media (max-width: 900px) {
+  .index-hero-row { grid-template-columns: 1fr; }
+  .market-bottom-row { flex-direction: column; }
+}

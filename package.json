@@ -1,0 +1,15 @@
+{
+  "name": "blockchain-papertrade",
+  "version": "1.0.0",
+  "description": "Blockchain Paper Trading Platform for Indian Stock Markets",
+  "scripts": {
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "npm --prefix server run dev",
+    "client": "npm --prefix client run dev",
+    "install:all": "npm --prefix server install && npm --prefix client install",
+    "start": "npm --prefix server start"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
