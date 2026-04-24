@@ -19,9 +19,11 @@ function makeSparkData(changePercent) {
 }
 
 export default function IndexHeroCard({ label, quote, loading, onClick, active, onFullScreen }) {
-  const isGain    = (quote?.changePercent || 0) >= 0;
+  const safeChgPct = Number.isFinite(Number(quote?.changePercent)) ? Number(quote.changePercent) : 0;
+  const safeChgAbs = Number.isFinite(Number(quote?.change)) ? Number(quote.change) : 0;
+  const isGain    = safeChgPct >= 0;
   const color     = isGain ? 'var(--gain)' : 'var(--loss)';
-  const sparkData = quote ? makeSparkData(quote.changePercent) : [];
+  const sparkData = quote ? makeSparkData(safeChgPct) : [];
   
   const [flash, setFlash] = useState('');
   const prevPrice = useRef(quote?.price);
@@ -37,7 +39,7 @@ export default function IndexHeroCard({ label, quote, loading, onClick, active, 
   }, [quote?.price]);
 
   // Determine simulated adv/dec ratio based on changePercent
-  const chg = quote?.changePercent || 0;
+  const chg = safeChgPct;
   let advPct = 50 + (chg * 20); // arbitrary but looks realistic
   advPct = Math.max(0, Math.min(100, advPct));
   const decPct = 100 - advPct;
@@ -66,8 +68,8 @@ export default function IndexHeroCard({ label, quote, loading, onClick, active, 
         <>
           <div className="hero-price" style={{ color }}>{fmtPrice(quote.price)}</div>
           <div className="hero-change">
-            <span style={{ color }}>{isGain ? '▲' : '▼'} {Math.abs(quote.change || 0).toFixed(2)}</span>
-            <span style={{ color, opacity: 0.85 }}>({isGain ? '+' : ''}{quote.changePercent?.toFixed(2)}%)</span>
+            <span style={{ color }}>{isGain ? '▲' : '▼'} {Math.abs(safeChgAbs).toFixed(2)}</span>
+            <span style={{ color, opacity: 0.85 }}>({isGain ? '+' : ''}{safeChgPct.toFixed(2)}%)</span>
           </div>
           {sparkData.length > 0 && (
             <div className="hero-mini-chart">

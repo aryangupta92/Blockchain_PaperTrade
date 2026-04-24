@@ -28,7 +28,15 @@ export default function MarketPage({ quotes, marketStatus, marketLoading, onOpen
       .catch(console.error)
       .finally(() => setMoversLoading(false));
 
-    fetch('/api/market/fii-dii').then(r => r.json()).then(setFiiDii).catch(console.error);
+    fetch('/api/market/fii-dii')
+      .then(r => r.json())
+      .then((d) => {
+        // Backend returns 503 with { error } when no reliable source is available.
+        // Treat that as "no data" so dashboard doesn't crash on `fiiDii.fii.net`.
+        if (d && d.fii && d.dii) setFiiDii(d);
+        else setFiiDii(null);
+      })
+      .catch(() => setFiiDii(null));
   }, []);
 
   // Live clock
@@ -166,7 +174,7 @@ export default function MarketPage({ quotes, marketStatus, marketLoading, onOpen
           />
         </div>
         <div className="card" style={{ flex: '1 1 38%' }}>
-          <SectorIndices quotes={quotes} onClick={(sym) => onOpenChart && onOpenChart(sym, null)} />
+          <SectorIndices quotes={quotes} onSelect={(sym) => onOpenChart && onOpenChart(sym, null)} />
         </div>
       </div>
     </div>

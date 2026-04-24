@@ -21,7 +21,19 @@ const api = {
   searchStocks: (query) => apiFetch(`/market/search?q=${query}`).then(d => d.results || []),
 
   // ── Trades ────────────────────────────────────────────────────────────────
-  executeTrade: (trade) => apiFetch('/trades', { method: 'POST', body: JSON.stringify(trade) }),
+  executeTrade: (trade) =>
+    apiFetch('/trades', { method: 'POST', body: JSON.stringify(trade) }).then((d) => {
+      // Server returns { trade, block }. The app expects a flat trade-like object
+      // with `blockIndex` and `hash` for dual-chain syncing.
+      const t = d?.trade || d;
+      if (!t) return d;
+      return {
+        ...t,
+        // normalize: `hash` is used by web3 sync; map to local block hash
+        hash: t.hash || t.blockHash || d?.block?.hash,
+        blockIndex: t.blockIndex ?? d?.block?.index,
+      };
+    }),
   getBlockchain: () => apiFetch('/trades/blockchain'),
   verifyChain: () => apiFetch('/trades/verify'),
 
