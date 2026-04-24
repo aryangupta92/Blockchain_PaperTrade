@@ -1,12 +1,19 @@
 import { useState, useEffect, useRef } from 'react';
 import './OptionChain.css';
 import api from '../../services/api';
-import { RefreshCw, ChevronDown, Target } from 'lucide-react';
+import { RefreshCw, ChevronDown, Target, TrendingUp, TrendingDown } from 'lucide-react';
 
 function fmt(n, d = 2) {
   if (n === null || n === undefined) return '—';
   return Number(n).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
 }
+
+function fmtPercent(n) {
+  if (n === null || n === undefined) return '—';
+  const sign = n >= 0 ? '+' : '';
+  return `${sign}${fmt(n, 2)}%`;
+}
+
 function fmtLakhs(n) {
   if (!n) return '—';
   return (n / 100000).toFixed(2);
@@ -27,7 +34,7 @@ export default function OptionChainPage({ symbol = '^NSEI', inModal = false, onT
       const data = await api.getOptionChain(symbol, exp);
       setChain(data);
       if (!expiry && data.expiry) setExpiry(data.expiry);
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error('Option chain fetch error:', e); }
     finally { setLoading(false); }
   };
 
@@ -43,10 +50,13 @@ export default function OptionChainPage({ symbol = '^NSEI', inModal = false, onT
   const handleOptionTrade = async (side) => {
     if (!tradeModal || !onTrade) return;
     const { type, strike, price } = tradeModal;
-    const optSym = `${symbol.replace('^', '')} ${expiry} ${strike} ${type.toUpperCase()}`;
+    const underlying = symbol.replace('^', '');
+    const optType = type === 'call' ? 'CE' : 'PE';
+    const optSym = `${underlying} ${expiry} ${strike} ${optType}`;
     try {
-      await onTrade({ type: side, symbol: optSym, quantity: 1, price, orderType: 'market' });
-    } catch (e) { console.error(e); }
+      // Simulate options as premium × lotSize (contract multiplier)
+      await onTrade({ type: side, symbol: optSym, quantity: Number(chain?.lotSize || 1), price, orderType: 'market' });
+    } catch (e) { console.error('Option trade error:', e); }
     setTradeModal(null);
   };
 
@@ -60,7 +70,7 @@ export default function OptionChainPage({ symbol = '^NSEI', inModal = false, onT
     );
   }
 
-  if (!chain) return <div style={{ padding: 24, color: 'var(--text-muted)' }}>Option chain unavailable.</div>;
+  if (!chain) return <div style={{ padding: 24, color: 'var(--text-muted)' }}>Option chain unavailable. Please try again.</div>;
 
   const { spotPrice, syntheticFutures, lotSize, pcr, maxPain, totalVolume, exchange, expiries, chain: rows } = chain;
 
@@ -131,140 +141,183 @@ export default function OptionChainPage({ symbol = '^NSEI', inModal = false, onT
         </div>
       </div>
 
-      {/* ── Table ── */}
-      <div className="oc-table-wrap">
-        <table className="oc-table">
-          <thead>
-            <tr>
-              {/* CALLS */}
-              <th className="oc-calls-col">VOLUME – LAKHS</th>
-              <th className="oc-calls-col">ASK</th>
-              <th className="oc-calls-col">BID</th>
-              <th className="oc-calls-col">OI – LAKHS</th>
-              <th className="oc-calls-col">LTP</th>
-              {/* STRIKE */}
-              <th className="oc-strike-col">STRIKE</th>
-              {/* PUTS */}
-              <th className="oc-puts-col">LTP</th>
-              <th className="oc-puts-col">OI – LAKHS</th>
-              <th className="oc-puts-col">BID</th>
-              <th className="oc-puts-col">ASK</th>
-              <th className="oc-puts-col">VOLUME – LAKHS</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => {
-              const { strike, call, put, itm, atm } = row;
-              const isAtm = atm;
-
-              return (
-                <tr
-                  key={strike}
-                  ref={isAtm ? atmRowRef : null}
-                  className={`oc-row ${itm.call ? 'oc-itm-call' : ''} ${itm.put ? 'oc-itm-put' : ''} ${isAtm ? 'oc-atm' : ''} ${highlight === strike ? 'oc-highlight' : ''}`}
-                  onMouseEnter={() => setHighlight(strike)}
-                  onMouseLeave={() => setHighlight(null)}
-                >
-                  {/* ── CALLS ── */}
+          {/* ── Table ── */}
+          <div className="oc-table-wrap">
+            <table className="oc-table">
+              <thead>
+                <tr>
+                  {/* CALLS */}
                   {bottomTab === 'greeks' ? (
                     <>
-                      <td className="oc-calls-col mono">{fmt(call.delta, 4)}</td>
-                      <td className="oc-calls-col mono">{fmt(call.gamma, 5)}</td>
-                      <td className="oc-calls-col mono">{fmt(call.theta, 2)}</td>
-                      <td className="oc-calls-col mono">{fmt(call.vega, 2)}</td>
-                      <td className="oc-calls-col mono">{fmt(call.iv, 1)}%</td>
+                      <th className="oc-calls-col">IV</th>
+                      <th className="oc-calls-col">Δ (Delta)</th>
+                      <th className="oc-calls-col">Γ (Gamma)</th>
+                      <th className="oc-calls-col">Θ (Theta)</th>
+                      <th className="oc-calls-col">ν (Vega)</th>
                     </>
                   ) : bottomTab === 'perlot' ? (
                     <>
-                      <td className="oc-calls-col mono">{fmtLakhs(call.volume * lotSize)}</td>
-                      <td className="oc-calls-col mono">{fmt(call.ask * lotSize, 0)}</td>
-                      <td className="oc-calls-col mono">{fmt(call.bid * lotSize, 0)}</td>
-                      <td className="oc-calls-col mono">{fmtLakhs(call.oi * lotSize)}</td>
-                      <td className="oc-calls-col mono">{fmt(call.ltp * lotSize, 0)}</td>
+                      <th className="oc-calls-col">VOL – LAKHS</th>
+                      <th className="oc-calls-col">ASK</th>
+                      <th className="oc-calls-col">BID</th>
+                      <th className="oc-calls-col">OI – LAKHS</th>
+                      <th className="oc-calls-col">LTP</th>
                     </>
                   ) : (
                     <>
-                      <td className="oc-calls-col oc-vol">{fmtLakhs(call.volume)}</td>
-                      <td className="oc-calls-col mono">{fmt(call.ask)}</td>
-                      <td className="oc-calls-col mono">{fmt(call.bid)}</td>
-                      <td className="oc-calls-col">
-                        <div className="oc-oi-wrap">
-                          <span className="mono">{fmtLakhs(call.oi)}</span>
-                          <span className={call.oiChange >= 0 ? 'oc-oi-chg gain' : 'oc-oi-chg loss'}>
-                            {call.oiChange >= 0 ? '+' : ''}{fmt(call.oiChange / 100000, 2)}
-                          </span>
-                          <div className="oc-oi-bar-wrap">
-                            <div className="oc-oi-bar-call" style={{ width: `${Math.min(100, call.oi / 1000)}%` }} />
-                          </div>
-                        </div>
-                      </td>
-                      <td
-                        className="oc-calls-col oc-ltp-cell"
-                        onClick={() => setTradeModal({ type: 'call', strike, side: 'buy', price: call.ltp })}
-                      >
-                        <span className="mono oc-ltp">{fmt(call.ltp)}</span>
-                        <span className={call.changePct >= 0 ? 'oc-chg gain' : 'oc-chg loss'}>
-                          {call.changePct >= 0 ? '+' : ''}{fmt(call.changePct, 2)}%
-                        </span>
-                      </td>
+                      <th className="oc-calls-col">VOLUME – LAKHS</th>
+                      <th className="oc-calls-col">ASK</th>
+                      <th className="oc-calls-col">BID</th>
+                      <th className="oc-calls-col">OI – LAKHS</th>
+                      <th className="oc-calls-col">LTP &amp; CHG%</th>
                     </>
                   )}
-
-                  {/* ── STRIKE ── */}
-                  <td className={`oc-strike-col ${isAtm ? 'oc-strike-atm' : ''}`}>
-                    {strike.toLocaleString('en-IN')}
-                  </td>
-
-                  {/* ── PUTS ── */}
+                  {/* STRIKE */}
+                  <th className="oc-strike-col">STRIKE</th>
+                  {/* PUTS */}
                   {bottomTab === 'greeks' ? (
                     <>
-                      <td className="oc-puts-col mono">{fmt(put.iv, 1)}%</td>
-                      <td className="oc-puts-col mono">{fmt(put.vega, 2)}</td>
-                      <td className="oc-puts-col mono">{fmt(put.theta, 2)}</td>
-                      <td className="oc-puts-col mono">{fmt(put.gamma, 5)}</td>
-                      <td className="oc-puts-col mono">{fmt(put.delta, 4)}</td>
+                      <th className="oc-puts-col">Vega</th>
+                      <th className="oc-puts-col">Theta</th>
+                      <th className="oc-puts-col">Gamma</th>
+                      <th className="oc-puts-col">Delta</th>
+                      <th className="oc-puts-col">IV</th>
                     </>
                   ) : bottomTab === 'perlot' ? (
                     <>
-                      <td className="oc-puts-col mono">{fmt(put.ltp * lotSize, 0)}</td>
-                      <td className="oc-puts-col mono">{fmtLakhs(put.oi * lotSize)}</td>
-                      <td className="oc-puts-col mono">{fmt(put.bid * lotSize, 0)}</td>
-                      <td className="oc-puts-col mono">{fmt(put.ask * lotSize, 0)}</td>
-                      <td className="oc-puts-col mono">{fmtLakhs(put.volume * lotSize)}</td>
+                      <th className="oc-puts-col">LTP</th>
+                      <th className="oc-puts-col">OI – LAKHS</th>
+                      <th className="oc-puts-col">BID</th>
+                      <th className="oc-puts-col">ASK</th>
+                      <th className="oc-puts-col">VOL – LAKHS</th>
                     </>
                   ) : (
                     <>
-                      <td
-                        className="oc-puts-col oc-ltp-cell"
-                        onClick={() => setTradeModal({ type: 'put', strike, side: 'buy', price: put.ltp })}
-                      >
-                        <span className="mono oc-ltp">{fmt(put.ltp)}</span>
-                        <span className={put.changePct >= 0 ? 'oc-chg gain' : 'oc-chg loss'}>
-                          {put.changePct >= 0 ? '+' : ''}{fmt(put.changePct, 2)}%
-                        </span>
-                      </td>
-                      <td className="oc-puts-col">
-                        <div className="oc-oi-wrap">
-                          <span className={put.oiChange >= 0 ? 'oc-oi-chg gain' : 'oc-oi-chg loss'}>
-                            {put.oiChange >= 0 ? '+' : ''}{fmt(put.oiChange / 100000, 2)}
-                          </span>
-                          <span className="mono">{fmtLakhs(put.oi)}</span>
-                          <div className="oc-oi-bar-wrap">
-                            <div className="oc-oi-bar-put" style={{ width: `${Math.min(100, put.oi / 1000)}%` }} />
-                          </div>
-                        </div>
-                      </td>
-                      <td className="oc-puts-col mono">{fmt(put.bid)}</td>
-                      <td className="oc-puts-col mono">{fmt(put.ask)}</td>
-                      <td className="oc-puts-col oc-vol">{fmtLakhs(put.volume)}</td>
+                      <th className="oc-puts-col">LTP &amp; CHG%</th>
+                      <th className="oc-puts-col">OI – LAKHS</th>
+                      <th className="oc-puts-col">BID</th>
+                      <th className="oc-puts-col">ASK</th>
+                      <th className="oc-puts-col">VOLUME – LAKHS</th>
                     </>
                   )}
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+              </thead>
+              <tbody>
+                {rows.map((row) => {
+                  const { strike, call, put, itm, atm } = row;
+                  const isAtm = atm;
+
+                  return (
+                    <tr
+                      key={strike}
+                      ref={isAtm ? atmRowRef : null}
+                      className={`oc-row ${itm.call ? 'oc-itm-call' : ''} ${itm.put ? 'oc-itm-put' : ''} ${isAtm ? 'oc-atm' : ''} ${highlight === strike ? 'oc-highlight' : ''}`}
+                      onMouseEnter={() => setHighlight(strike)}
+                      onMouseLeave={() => setHighlight(null)}
+                    >
+                      {/* ── CALLS ── */}
+                      {bottomTab === 'greeks' ? (
+                        <>
+                          <td className="oc-calls-col mono" title="Implied Volatility">{fmt(call.iv, 1)}</td>
+                          <td className="oc-calls-col mono" title="Delta - Rate of change of premium with underlying price">{fmt(call.delta, 4)}</td>
+                          <td className="oc-calls-col mono" title="Gamma - Rate of change of delta">{fmt(call.gamma, 5)}</td>
+                          <td className="oc-calls-col mono" title="Theta - Time decay per day">{fmt(call.theta, 2)}</td>
+                          <td className="oc-calls-col mono" title="Vega - Sensitivity to volatility changes">{fmt(call.vega, 2)}</td>
+                        </>
+                      ) : bottomTab === 'perlot' ? (
+                        <>
+                          <td className="oc-calls-col mono">{fmtLakhs(call.volume * lotSize)}</td>
+                          <td className="oc-calls-col mono">{fmt(call.ask * lotSize, 0)}</td>
+                          <td className="oc-calls-col mono">{fmt(call.bid * lotSize, 0)}</td>
+                          <td className="oc-calls-col mono">{fmtLakhs(call.oi * lotSize)}</td>
+                          <td className="oc-calls-col mono">{fmt(call.ltp * lotSize, 0)}</td>
+                        </>
+                      ) : (
+                        <>
+                          <td className="oc-calls-col oc-vol">{fmtLakhs(call.volume)}</td>
+                          <td className="oc-calls-col mono">{fmt(call.ask)}</td>
+                          <td className="oc-calls-col mono">{fmt(call.bid)}</td>
+                          <td className="oc-calls-col">
+                            <div className="oc-oi-wrap">
+                              <span className="mono">{fmtLakhs(call.oi)}</span>
+                              <span className={call.oiChange >= 0 ? 'oc-oi-chg gain' : 'oc-oi-chg loss'}>
+                                {call.oiChange >= 0 ? '+' : ''}{fmt(call.oiChange / 100000, 2)}
+                              </span>
+                              <div className="oc-oi-bar-wrap">
+                                <div className="oc-oi-bar-call" style={{ width: `${Math.min(100, call.oi / 1000)}%` }} />
+                              </div>
+                            </div>
+                          </td>
+                          <td
+                            className="oc-calls-col oc-ltp-cell"
+                            onClick={() => setTradeModal({ type: 'call', strike, side: 'buy', price: call.ltp })}
+                          >
+                            <span className="mono oc-ltp">{fmt(call.ltp)}</span>
+                            <span className={call.changePct >= 0 ? 'oc-chg gain' : 'oc-chg loss'}>
+                              {call.changePct >= 0 ? <TrendingUp size={11} style={{display:'inline', marginRight: 2}} /> : <TrendingDown size={11} style={{display:'inline', marginRight: 2}} />}
+                              {fmtPercent(call.changePct)}
+                            </span>
+                          </td>
+                        </>
+                      )}
+
+                      {/* ── STRIKE ── */}
+                      <td className={`oc-strike-col ${isAtm ? 'oc-strike-atm' : ''}`}>
+                        {strike.toLocaleString('en-IN')}
+                      </td>
+
+                      {/* ── PUTS ── */}
+                      {bottomTab === 'greeks' ? (
+                        <>
+                          <td className="oc-puts-col mono" title="Vega">{fmt(put.vega, 2)}</td>
+                          <td className="oc-puts-col mono" title="Theta">{fmt(put.theta, 2)}</td>
+                          <td className="oc-puts-col mono" title="Gamma">{fmt(put.gamma, 5)}</td>
+                          <td className="oc-puts-col mono" title="Delta">{fmt(put.delta, 4)}</td>
+                          <td className="oc-puts-col mono" title="IV">{fmt(put.iv, 1)}</td>
+                        </>
+                      ) : bottomTab === 'perlot' ? (
+                        <>
+                          <td className="oc-puts-col mono">{fmt(put.ltp * lotSize, 0)}</td>
+                          <td className="oc-puts-col mono">{fmtLakhs(put.oi * lotSize)}</td>
+                          <td className="oc-puts-col mono">{fmt(put.bid * lotSize, 0)}</td>
+                          <td className="oc-puts-col mono">{fmt(put.ask * lotSize, 0)}</td>
+                          <td className="oc-puts-col mono">{fmtLakhs(put.volume * lotSize)}</td>
+                        </>
+                      ) : (
+                        <>
+                          <td
+                            className="oc-puts-col oc-ltp-cell"
+                            onClick={() => setTradeModal({ type: 'put', strike, side: 'buy', price: put.ltp })}
+                          >
+                            <span className="mono oc-ltp">{fmt(put.ltp)}</span>
+                            <span className={put.changePct >= 0 ? 'oc-chg gain' : 'oc-chg loss'}>
+                              {put.changePct >= 0 ? <TrendingUp size={11} style={{display:'inline', marginRight: 2}} /> : <TrendingDown size={11} style={{display:'inline', marginRight: 2}} />}
+                              {fmtPercent(put.changePct)}
+                            </span>
+                          </td>
+                          <td className="oc-puts-col">
+                            <div className="oc-oi-wrap">
+                              <span className={put.oiChange >= 0 ? 'oc-oi-chg gain' : 'oc-oi-chg loss'}>
+                                {put.oiChange >= 0 ? '+' : ''}{fmt(put.oiChange / 100000, 2)}
+                              </span>
+                              <span className="mono">{fmtLakhs(put.oi)}</span>
+                              <div className="oc-oi-bar-wrap">
+                                <div className="oc-oi-bar-put" style={{ width: `${Math.min(100, put.oi / 1000)}%` }} />
+                              </div>
+                            </div>
+                          </td>
+                          <td className="oc-puts-col mono">{fmt(put.bid)}</td>
+                          <td className="oc-puts-col mono">{fmt(put.ask)}</td>
+                          <td className="oc-puts-col oc-vol">{fmtLakhs(put.volume)}</td>
+                        </>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+                
 
       {/* ── Bottom Tabs ── */}
       <div className="oc-bottom-tabs">
