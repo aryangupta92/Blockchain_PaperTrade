@@ -21,19 +21,73 @@ const CONTRACT_ABI = [
 // Address where contract is deployed (Placeholder - user must enter after deploying on Remix)
 const CONTRACT_ADDRESS = "0x0075F3eB7ed8aebC2086AE937bB7a256eec3B3E7";
 
+export const getMetaMaskProvider = () => {
+  if (!window.ethereum) return null;
+  
+  let provider = window.ethereum;
+  if (window.ethereum.providers?.length) {
+    const mm = window.ethereum.providers.find(p => p.isMetaMask && !p.isTrust && !p.isTrustWallet);
+    if (mm) provider = mm;
+  }
+  
+  if (provider.isTrust || provider.isTrustWallet) {
+    throw new Error("Trust Wallet is intercepting the connection. Please disable Trust Wallet in your browser extensions or turn off 'Default Wallet' in its settings to use MetaMask.");
+  }
+  
+  return provider;
+};
+
 export const getWeb3Provider = () => {
-  if (window.ethereum) {
-    // Ethers v6 standard syntax
-    return new ethers.BrowserProvider(window.ethereum);
+  const provider = getMetaMaskProvider();
+  if (provider) {
+    return new ethers.BrowserProvider(provider);
   }
   return null;
 };
 
 export const connectWallet = async () => {
-  if (!window.ethereum) throw new Error("MetaMask not found! Please install it.");
-  const provider = getWeb3Provider();
-  await provider.send("eth_requestAccounts", []);
-  const signer = await provider.getSigner();
+  const ethProvider = getMetaMaskProvider();
+  if (!ethProvider) throw new Error("MetaMask not found! Please install it.");
+
+  await ethProvider.request({ method: "eth_requestAccounts" });
+  
+  // Enforce Sepolia Network
+  const sepoliaChainId = '0xaa36a7';
+  try {
+    await ethProvider.request({
+      method: 'wallet_switchEthereumChain',
+      params: [{ chainId: sepoliaChainId }],
+    });
+  } catch (switchError) {
+    // This error code indicates that the chain has not been added to MetaMask.
+    if (switchError.code === 4902) {
+      try {
+        await ethProvider.request({
+          method: 'wallet_addEthereumChain',
+          params: [
+            {
+              chainId: sepoliaChainId,
+              chainName: 'Sepolia test network',
+              nativeCurrency: {
+                name: 'SepoliaETH',
+                symbol: 'SEP',
+                decimals: 18
+              },
+              rpcUrls: ['https://sepolia.infura.io/v3/'],
+              blockExplorerUrls: ['https://sepolia.etherscan.io']
+            }
+          ],
+        });
+      } catch (addError) {
+        throw new Error("Failed to add Sepolia network to MetaMask");
+      }
+    } else {
+      throw new Error("Failed to switch to Sepolia network");
+    }
+  }
+
+  const browserProvider = new ethers.BrowserProvider(ethProvider);
+  const signer = await browserProvider.getSigner();
   return signer.getAddress();
 };
 

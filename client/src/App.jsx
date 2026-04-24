@@ -32,6 +32,7 @@ const SAVE = (k, v)   => { try { localStorage.setItem(k, JSON.stringify(v)); } c
 
 const WATCHED_DEFAULT = ['RELIANCE','TCS','HDFCBANK','INFY','ICICIBANK','SBIN','WIPRO','BAJFINANCE'];
 const INDICES = ['^NSEI','^BSESN','^NSEBANK','^CNXIT','^NSEMDCP50'];
+const isOptionSymbol = (s) => /\b(CE|PE)\b/.test(String(s || ''));
 
 export default function App() {
   // ── Auth state ──────────────────────────────────────────────────────────────
@@ -66,7 +67,13 @@ export default function App() {
   useEffect(() => {
     if (!token) { setSubLoading(false); return; }
     api.getSubStatus()
-      .then(status => { setSubStatus(status); if (status.balance) setBalance(status.balance); })
+      .then(status => {
+        setSubStatus(status);
+        // Pull portfolio state from server so balance doesn't "drift" across reloads
+        if (Number.isFinite(Number(status.balance))) setBalance(Number(status.balance));
+        if (status.holdings) setHoldings(status.holdings);
+        if (status.trades) setTrades(status.trades);
+      })
       .catch(() => { localStorage.removeItem('bt_token'); setToken(null); setUser(null); })
       .finally(() => setSubLoading(false));
   }, [token]);
@@ -132,7 +139,8 @@ export default function App() {
     }
     if (type === 'sell') {
       const held = holdings[symbol]?.quantity || 0;
-      if (held < quantity) throw new Error(`Insufficient shares. Holding: ${held}`);
+      // Allow option shorting; disallow stock shorting in this simulator
+      if (!isOptionSymbol(symbol) && held < quantity) throw new Error(`Insufficient shares. Holding: ${held}`);
     }
 
     // Execute via API (Local Blockchain)
@@ -151,14 +159,50 @@ export default function App() {
     setBalance(prev => type === 'buy' ? prev - price * quantity : prev + price * quantity);
     setHoldings(prev => {
       const cur = prev[symbol] || { quantity: 0, avgPrice: 0 };
+
+      const qty = Number(quantity);
+      const px = Number(price);
+      if (!qty || !px) return prev;
+
+      // Signed position model:
+      // - Long: quantity > 0
+      // - Short: quantity < 0 (allowed for options; stocks prevented above)
       if (type === 'buy') {
-        const newQty = cur.quantity + quantity;
-        const newAvg = ((cur.quantity * cur.avgPrice) + (quantity * price)) / newQty;
+        const newQty = cur.quantity + qty;
+
+        // If covering a short, keep avgPrice until fully covered; if flip to long, reset avgPrice to fill price
+        if (cur.quantity < 0) {
+          if (newQty < 0) return { ...prev, [symbol]: { ...cur, quantity: newQty } };
+          if (newQty === 0) { const n = { ...prev }; delete n[symbol]; return n; }
+          return { ...prev, [symbol]: { quantity: newQty, avgPrice: px } };
+        }
+
+        // Adding to long
+        const newAvg = newQty > 0 ? ((cur.quantity * cur.avgPrice) + (qty * px)) / newQty : px;
         return { ...prev, [symbol]: { quantity: newQty, avgPrice: newAvg } };
-      } else {
-        const newQty = cur.quantity - quantity;
-        return newQty <= 0 ? (() => { const n = {...prev}; delete n[symbol]; return n; })() : { ...prev, [symbol]: { ...cur, quantity: newQty } };
       }
+
+      // sell
+      const newQty = cur.quantity - qty;
+
+      // Reducing a long
+      if (cur.quantity > 0) {
+        if (newQty > 0) return { ...prev, [symbol]: { ...cur, quantity: newQty } };
+        if (newQty === 0) { const n = { ...prev }; delete n[symbol]; return n; }
+        // Flip to short: reset avgPrice to fill price
+        return { ...prev, [symbol]: { quantity: newQty, avgPrice: px } };
+      }
+
+      // Increasing or maintaining a short
+      if (cur.quantity <= 0) {
+        if (newQty === 0) { const n = { ...prev }; delete n[symbol]; return n; }
+        const curAbs = Math.abs(cur.quantity);
+        const newAbs = Math.abs(newQty);
+        const newAvg = ((curAbs * cur.avgPrice) + (qty * px)) / newAbs;
+        return { ...prev, [symbol]: { quantity: newQty, avgPrice: newAvg } };
+      }
+
+      return prev;
     });
     setTrades(prev => [result, ...prev]);
     showToast(`✅ ${type.toUpperCase()} ${quantity} ${symbol} @ ₹${price.toLocaleString('en-IN')} — Block #${result.blockIndex}`);
@@ -210,7 +254,7 @@ export default function App() {
   const pages = {
     market:     <MarketPage   quotes={quotes} marketStatus={marketStatus} marketLoading={marketLoading} onOpenChart={openChart} />,
     trade:      <TradePage    quotes={quotes} holdings={holdings} balance={balance} onTrade={executeTrade} watchlist={watchlist} onAddWatch={handleAddWatch} />,
-    portfolio:  <PortfolioPage holdings={holdings} quotes={quotes} balance={balance} initialBalance={subStatus?.subscription?.initialBalance || balance} />,
+    portfolio:  <PortfolioPage holdings={holdings} quotes={quotes} balance={balance} initialBalance={subStatus?.subscription?.initialBalance || balance} onTrade={executeTrade} />,
     blockchain: <BlockchainExplorer trades={trades} />,
     watchlist:  <WatchlistPage watchlist={watchlist} quotes={quotes} onAdd={handleAddWatch} onRemove={handleRemWatch} onTrade={() => setActivePage('trade')} />,
     orders:     <OrdersPage   trades={trades} />,

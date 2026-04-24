@@ -137,6 +137,8 @@ router.get('/status', authMiddleware, (req, res) => {
     subscription: sub,
     plan,
     balance: user.balance,
+    holdings: user.holdings || {},
+    trades: user.trades || [],
     tradesRemaining: sub.maxTrades < 0 ? -1 : sub.maxTrades - sub.tradesUsed,
   });
 });

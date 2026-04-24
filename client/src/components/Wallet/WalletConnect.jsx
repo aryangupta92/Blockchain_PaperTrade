@@ -68,7 +68,7 @@ export default function WalletConnect({ onConnect }) {
     <div className="wallet-connect-wrapper">
       <button className="wallet-btn" onClick={() => handleConnect()} disabled={loading}>
         <Wallet size={14} />
-        {loading ? 'Connecting...' : 'Connect Wallet'}
+        {loading ? 'Connecting...' : 'Connect MetaMask'}
       </button>
       {error && <div className="wallet-err"><AlertCircle size={10} /> {error}</div>}
     </div>
