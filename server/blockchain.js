@@ -97,16 +97,34 @@ class Blockchain {
 
   getStats() {
     const trades = this.chain.slice(1); // exclude genesis
-    const buys = trades.filter((b) => b.tradeData.type === 'buy');
-    const sells = trades.filter((b) => b.tradeData.type === 'sell');
+    const buys = trades.filter((b) => b.tradeData?.type === 'buy');
+    const sells = trades.filter((b) => b.tradeData?.type === 'sell');
     return {
       totalBlocks: this.chain.length,
       totalTrades: trades.length,
       totalBuys: buys.length,
       totalSells: sells.length,
-      genesisHash: this.chain[0].hash,
-      latestHash: this.getLatestBlock().hash,
+      genesisHash: this.chain[0]?.hash,
+      latestHash: this.getLatestBlock()?.hash,
     };
+  }
+
+  // New: Rebuild chain from stored trades
+  rebuild(storedTrades) {
+    // Keep genesis, clear the rest
+    this.chain = [this.chain[0]];
+    
+    // Sort by block index to maintain order
+    const sorted = [...storedTrades].sort((a, b) => (a.blockIndex || 0) - (b.blockIndex || 0));
+    
+    sorted.forEach(t => {
+      const block = new Block(this.chain.length, t, this.getLatestBlock().hash);
+      // Restore the properties from the stored block
+      block.timestamp = t.minedAt || t.executedAt || block.timestamp;
+      block.hash = t.blockHash || block.hash;
+      block.nonce = t.nonce || 0;
+      this.chain.push(block);
+    });
   }
 }
 

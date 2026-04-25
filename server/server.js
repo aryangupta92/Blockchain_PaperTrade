@@ -73,7 +73,29 @@ app.get('/api/sebi/rules', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🚀 BlockPaperTrade API running on http://localhost:${PORT}`);
-  console.log(`⛓️  Blockchain initialized — Genesis block mined`);
+  
+  // Initialize blockchain from persistent storage
+  try {
+    const blockchain = require('./blockchain');
+    const fs = require('fs');
+    const path = require('path');
+    const DB_PATH = path.join(__dirname, './data/users.json');
+    if (fs.existsSync(DB_PATH)) {
+      const db = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
+      const allTrades = (db.users || []).reduce((acc, u) => [...acc, ...(u.trades || [])], []);
+      if (allTrades.length > 0) {
+        blockchain.rebuild(allTrades);
+        console.log(`⛓️  Blockchain restored — ${allTrades.length} trades loaded from storage`);
+      } else {
+        console.log(`⛓️  Blockchain initialized — Genesis block mined`);
+      }
+    } else {
+      console.log(`⛓️  Blockchain initialized — Genesis block mined`);
+    }
+  } catch (err) {
+    console.error('Failed to restore blockchain:', err.message);
+  }
+
   console.log(`📊 Market data: Yahoo Finance (NSE/BSE)`);
   console.log(`🔐 Auth & Subscription: Active`);
   console.log(`📋 SEBI Compliance: Enabled`);

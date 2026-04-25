@@ -318,6 +318,149 @@
           "minedAt": "2026-04-24T04:18:10.568Z"
         }
       ]
+    },
+    {
+      "id": "USR-1777088766170",
+      "name": "Vedika Agrawal",
+      "email": "vedika1464@gmail.com",
+      "phone": "9772219303",
+      "pan": null,
+      "dob": null,
+      "passwordHash": "$2b$10$t0WeB1rJKtmnfqAS31MbFu7uf8CNDPTeEBJ7x2gBU5THUzuHnf5Bm",
+      "kycStatus": "not_started",
+      "createdAt": "2026-04-25T03:46:06.170Z",
+      "subscription": {
+        "planId": "pro",
+        "planName": "Pro",
+        "purchasedAt": "2026-04-25T03:46:30.241Z",
+        "expiresAt": "2026-05-25T03:46:30.241Z",
+        "virtualBalance": 200000,
+        "initialBalance": 200000,
+        "tradesUsed": 6,
+        "maxTrades": 200,
+        "status": "active",
+        "transactionId": "TXN-1777088790241"
+      },
+      "riskDisclosureAccepted": true,
+      "sebiRegistered": true,
+      "riskDisclosureAt": "2026-04-25T03:46:08.208Z",
+      "balance": 181265.54,
+      "holdings": {
+        "INFY.NS": {
+          "quantity": 2,
+          "avgPrice": 1154.6999999999998
+        },
+        "TCS.NS": {
+          "quantity": 6,
+          "avgPrice": 2397.1000000000004
+        },
+        "WIPRO": {
+          "quantity": 1,
+          "avgPrice": 199.36
+        },
+        "BAJFINANCE": {
+          "quantity": 2,
+          "avgPrice": 921.55
+        }
+      },
+      "trades": [
+        {
+          "type": "buy",
+          "symbol": "BAJFINANCE",
+          "quantity": 2,
+          "price": 921.55,
+          "orderType": "market",
+          "totalValue": 1843.1,
+          "tradeId": "TRADE-1777090825507-FN4A",
+          "executedAt": "2026-04-25T04:20:25.507Z",
+          "userId": "USR-1777088766170",
+          "blockIndex": 22,
+          "blockHash": "0089f53644d1aa728506b6761b9cb62f38a144c185810a94a0e0d04ab535cd09",
+          "previousHash": "0056d1bfa63c361ca0a49f7b6632394ad53b4af28ce33ef3f084387c690a3945",
+          "nonce": 198,
+          "minedAt": "2026-04-25T04:20:25.507Z"
+        },
+        {
+          "type": "buy",
+          "symbol": "WIPRO",
+          "quantity": 1,
+          "price": 199.36,
+          "orderType": "market",
+          "totalValue": 199.36,
+          "tradeId": "TRADE-1777090428800-5P7E",
+          "executedAt": "2026-04-25T04:13:48.800Z",
+          "userId": "USR-1777088766170",
+          "blockIndex": 21,
+          "blockHash": "0056d1bfa63c361ca0a49f7b6632394ad53b4af28ce33ef3f084387c690a3945",
+          "previousHash": "00f06894b4c7963e6a92e98f49fddc8592e527d2ac8cadf8313cd403fd2dbac5",
+          "nonce": 217,
+          "minedAt": "2026-04-25T04:13:48.800Z"
+        },
+        {
+          "type": "buy",
+          "symbol": "INFY.NS",
+          "quantity": 1,
+          "price": 1154.6,
+          "orderType": "market",
+          "totalValue": 1154.6,
+          "tradeId": "TRADE-1777089919621-MXQC",
+          "executedAt": "2026-04-25T04:05:19.621Z",
+          "userId": "USR-1777088766170",
+          "blockIndex": 1,
+          "blockHash": "0046c53e09f5211df5b73a8a2c05769edebd699e64202fd6cb0835586317d3d7",
+          "previousHash": "008c7d456751435cbba3e22b5804cdef89c44e11a22ef16b9537120fc305b0f7",
+          "nonce": 333,
+          "minedAt": "2026-04-25T04:05:19.621Z"
+        },
+        {
+          "type": "buy",
+          "symbol": "TCS.NS",
+          "quantity": 3,
+          "price": 2396.9,
+          "orderType": "market",
+          "totalValue": 7190.7,
+          "tradeId": "TRADE-1777089413265-IBSF",
+          "executedAt": "2026-04-25T03:56:53.265Z",
+          "userId": "USR-1777088766170",
+          "blockIndex": 1,
+          "blockHash": "001e6a07246bd2e98a327a700e4f9dcedec91863050f881ccad77d1410f85ae7",
+          "previousHash": "00426f2b37adc9c10d04395484d91284182fb4bff35e8aa56360ebac0c5df756",
+          "nonce": 153,
+          "minedAt": "2026-04-25T03:56:53.266Z"
+        },
+        {
+          "type": "buy",
+          "symbol": "TCS.NS",
+          "quantity": 3,
+          "price": 2397.3,
+          "orderType": "market",
+          "totalValue": 7191.9,
+          "tradeId": "TRADE-1777089393116-UFFJ",
+          "executedAt": "2026-04-25T03:56:33.116Z",
+          "userId": "USR-1777088766170",
+          "blockIndex": 1,
+          "blockHash": "006f0136b047802294b5f0f40085c5b7109f354eca8930bb618bc46d440a0f67",
+          "previousHash": "00a284269278b314f5c22fb42c2e947ea3cffb9bad3b81ec7667c69298688a47",
+          "nonce": 72,
+          "minedAt": "2026-04-25T03:56:33.116Z"
+        },
+        {
+          "type": "buy",
+          "symbol": "INFY.NS",
+          "quantity": 1,
+          "price": 1154.8,
+          "orderType": "market",
+          "totalValue": 1154.8,
+          "tradeId": "TRADE-1777089353862-PB26",
+          "executedAt": "2026-04-25T03:55:53.862Z",
+          "userId": "USR-1777088766170",
+          "blockIndex": 1,
+          "blockHash": "008166b817adda57cd285b1e02b9589c357a6482d599dc6aa278619883d0616f",
+          "previousHash": "0049f2acedabdeb075a27d5c0f77a52dc1b48604a916c8bb2c6c5afacd7c5558",
+          "nonce": 75,
+          "minedAt": "2026-04-25T03:55:53.862Z"
+        }
+      ]
     }
   ]
 }

@@ -229,8 +229,12 @@ router.get('/news', async (req, res) => {
 // ─── GET /api/market/fii-dii ─────────────────────────────────────────────────
 router.get('/fii-dii', async (req, res) => {
   res.json({
-    fii: { buy: 12450.5, sell: 14200.2, net: -1749.7 },
-    dii: { buy: 10800.4, sell: 8300.1, net: 2500.3 },
+    fii: { buy: 12450.5, sell: 14200.2, net: -1749.7, label: 'Net Sellers' },
+    dii: { buy: 10800.4, sell: 8300.1, net: 2500.3, label: 'Net Buyers' },
+    advances: 284,
+    declines: 196,
+    unchanged: 20,
+    date: new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
     timestamp: new Date().toISOString()
   });
 });

@@ -128,7 +128,7 @@ export default function MarketPage({ quotes, marketStatus, marketLoading, onOpen
                     {fiiDii.fii.net >= 0 ? '+' : ''}₹{Math.abs(fiiDii.fii.net).toLocaleString()}Cr
                   </span>
                 </div>
-                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 44, marginTop: 4 }}>FII were {fiiDii.fii.label.toLowerCase()} on {fiiDii.date}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 44, marginTop: 4 }}>FII were {(fiiDii.fii.label || 'active').toLowerCase()} on {fiiDii.date || 'today'}</div>
               </div>
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -138,7 +138,7 @@ export default function MarketPage({ quotes, marketStatus, marketLoading, onOpen
                     {fiiDii.dii.net >= 0 ? '+' : ''}₹{Math.abs(fiiDii.dii.net).toLocaleString()}Cr
                   </span>
                 </div>
-                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 44, marginTop: 4 }}>DII were {fiiDii.dii.label.toLowerCase()} on {fiiDii.date}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 44, marginTop: 4 }}>DII were {(fiiDii.dii.label || 'active').toLowerCase()} on {fiiDii.date || 'today'}</div>
               </div>
             </div>
           </div>
