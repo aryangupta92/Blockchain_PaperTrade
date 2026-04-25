@@ -2,9 +2,9 @@ const express = require('express');
 const router = express.Router();
 const axios = require('axios');
 
-// Dhan API credentials (from user's provided credentials)
-const DHAN_CLIENT_ID = '1108512198';
-const DHAN_ACCESS_TOKEN = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpc3MiOiJkaGFuIiwicGFydG5lcklkIjoiIiwiZXhwIjoxNzc3MDQ2NzY5LCJpYXQiOjE3NzY5NjAzNjksInRva2VuQ29uc3VtZXJUeXBlIjoiU0VMRiIsIndlYmhvb2tVcmwiOiIiLCJkaGFuQ2xpZW50SWQiOiIxMTA4NTEyMTk4In0.pdf0oXvL2TjAfppboeWeP8jrJJn_vLSdiFtfLQJ0wCYfOn7urQqOhCAJNMXzlin2HWXxqTOwn3oN4n6lE4ryQw';
+// Dhan API credentials (from environment variables)
+const DHAN_CLIENT_ID = process.env.DHAN_CLIENT_ID || '';
+const DHAN_ACCESS_TOKEN = process.env.DHAN_ACCESS_TOKEN || '';
 
 // Map generic symbol to proper exchange codes
 function getDhanSymbol(symbol) {
