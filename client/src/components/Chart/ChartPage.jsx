@@ -6,7 +6,36 @@ import OptionChainPage from '../OptionChain/OptionChainPage';
 
 const TIMEFRAMES = ['1m','3m','5m','15m','30m','1h','4h','1D','1W'];
 const TF_TO_API = { '1m':'1m','3m':'2m','5m':'5m','15m':'15m','30m':'30m','1h':'60m','4h':'90m','1D':'1d','1W':'1wk' };
-const TF_TO_RANGE = { '1m':'1d','3m':'1d','5m':'1d','15m':'5d','30m':'5d','1h':'1mo','4h':'1mo','1D':'1y','1W':'5y' };
+// Maximise historical depth: intraday limited by Yahoo (7d for 1m; 60d for 15/30m; 2y for 1h/4h)
+// Daily and weekly use 'max' to retrieve all available years of data
+const TF_TO_RANGE = { '1m':'7d','3m':'7d','5m':'7d','15m':'60d','30m':'60d','1h':'2y','4h':'2y','1D':'max','1W':'max' };
+
+// IST offset in seconds (+5:30 = 19800 s)
+const IST_OFFSET_S = 5.5 * 3600;
+
+/**
+ * Format a Unix timestamp (seconds) as an IST string.
+ * isIntraday=true  →  "HH:MM"   (used for sub-daily chart timeframes)
+ * isIntraday=false →  "DD MMM" (used for daily/weekly charts)
+ */
+function fmtTimeIST(unixSec, isIntraday) {
+  const d = new Date((unixSec + IST_OFFSET_S) * 1000);
+  if (isIntraday) {
+    const hh = String(d.getUTCHours()).padStart(2, '0');
+    const mm = String(d.getUTCMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`;
+  }
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', timeZone: 'UTC' });
+}
+
+/** Format current wall clock time in IST using Intl */
+function getISTClock() {
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  }).format(new Date()) + ' UTC+5:30';
+}
 
 const DRAWING_TOOLS = [
   { id: 'cursor', label: 'Cursor', icon: '✛' },
@@ -87,6 +116,9 @@ export default function ChartPage({ symbol, symbolData, onClose, onTrade, holdin
         // Destroy old chart
         if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; }
 
+        // Determine if this timeframe shows intraday (sub-daily) data
+        const tfIsIntraday = !['1D','1W'].includes(timeframe);
+
         chart = createChart(containerRef.current, {
           width: containerRef.current.clientWidth,
           height: containerRef.current.clientHeight,
@@ -94,7 +126,17 @@ export default function ChartPage({ symbol, symbolData, onClose, onTrade, holdin
           grid: { vertLines: { color: '#161b22' }, horzLines: { color: '#161b22' } },
           crosshair: { mode: 1, vertLine: { color: '#6366f130', width: 1, style: 0 }, horzLine: { color: '#6366f130', width: 1, style: 0 } },
           rightPriceScale: { borderColor: '#21262d', minimumWidth: 65 },
-          timeScale: { borderColor: '#21262d', timeVisible: true, secondsVisible: false },
+          timeScale: {
+            borderColor: '#21262d',
+            timeVisible: true,
+            secondsVisible: false,
+            // Render x-axis tick labels in IST so market open (09:15) shows correctly
+            tickMarkFormatter: (time) => fmtTimeIST(time, tfIsIntraday),
+          },
+          localization: {
+            // Format crosshair time tooltip in IST as well
+            timeFormatter: (time) => fmtTimeIST(time, tfIsIntraday),
+          },
           handleScroll: { mouseWheel: true, pressedMouseMove: true },
           handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
         });
@@ -327,7 +369,7 @@ export default function ChartPage({ symbol, symbolData, onClose, onTrade, holdin
           ))}
           <span style={{ flex: 1 }} />
           <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-            {new Date().toLocaleTimeString('en-IN')} UTC+5:30
+            {getISTClock()}
           </span>
         </div>
       </div>

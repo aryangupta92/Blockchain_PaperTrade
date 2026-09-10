@@ -160,6 +160,7 @@ export default function MarketPage({ quotes, marketStatus, marketLoading, onOpen
           range={chartRange}
           onRangeChange={setChartRange}
           onSymbolChange={setChartSymbol}
+          quote={quotes[chartSymbol] || null}
         />
       </div>
 

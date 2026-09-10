@@ -1,18 +1,22 @@
 import { TrendingUp, BarChart2, Briefcase, Link, Eye, ClipboardList,
-         Newspaper, Target, LogOut, HelpCircle, Settings, User, Zap } from 'lucide-react';
+         Newspaper, Target, LogOut, HelpCircle, Settings, User, Zap, ShieldAlert } from 'lucide-react';
 
 const NAV = [
   { section: 'MARKET', items: [
     { id: 'market',    icon: TrendingUp,    label: 'Market',        badge: null },
+    { id: 'screener',  icon: Target,        label: 'Screener',      badge: 'NEW' },
     { id: 'news',      icon: Newspaper,     label: 'News & Events', badge: null },
   ]},
   { section: 'PORTFOLIO', items: [
     { id: 'portfolio', icon: Briefcase,     label: 'Holdings',      badge: null },
+    { id: 'risk',      icon: ShieldAlert,   label: 'Risk Advisor',  badge: 'AI' },
     { id: 'orders',    icon: ClipboardList, label: 'Orders',        badge: null },
     { id: 'watchlist', icon: Eye,           label: 'Watchlist',     badge: null },
+    { id: 'journal',   icon: BarChart2,     label: 'Trade Journal', badge: 'AI' },
   ]},
   { section: 'TRADING', items: [
-    { id: 'trade',    icon: Zap,           label: 'Trade Now',  badge: 'LIVE' },
+    { id: 'terminal', icon: Zap,           label: 'Pro Terminal',  badge: 'LIVE' },
+    { id: 'trade',    icon: Target,        label: 'Trade (Legacy)', badge: null },
     { id: 'options',  icon: Target,        label: 'Option Chain', badge: null },
   ]},
   { section: 'BLOCKCHAIN', items: [

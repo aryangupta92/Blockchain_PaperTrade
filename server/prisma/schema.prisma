@@ -1,0 +1,302 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// ─── USER & AUTH ──────────────────────────────────────────────────────────────
+model User {
+  id              String    @id @default(uuid())
+  name            String
+  email           String    @unique
+  passwordHash    String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  planId          String    @default("FREE")
+  balance         Float     @default(0.0)
+  riskAccepted    Boolean   @default(false)
+  lastLoginAt     DateTime?
+  mfaEnabled      Boolean   @default(false)
+
+  orders          Order[]
+  trades          Trade[]
+  holdings        Holding[]
+  watchlists      Watchlist[]
+  alerts          Alert[]
+  journalEntries  TradeJournal[]
+  auditLogs       AuditLog[]
+  notifications   Notification[]
+}
+
+// ─── INSTRUMENT MASTER ────────────────────────────────────────────────────────
+model Instrument {
+  id                String    @id @default(uuid())
+  symbol            String                          // Exchange symbol (e.g. RELIANCE)
+  tradingSymbol     String    @unique               // Canonical key (e.g. RELIANCE.NS)
+  isin              String?                         // ISIN for equities
+  exchange          String                          // NSE, BSE, NFO, MCX, CDS
+  segment           String    @default("EQ")        // EQ, FO, CD, COM
+  name              String                          // Full company name
+  shortName         String?
+  type              String                          // EQUITY, INDEX, OPTION, FUTURE, ETF, MF, CRYPTO
+  underlyingSymbol  String?                         // For derivatives — underlying equity
+  lotSize           Int       @default(1)
+  tickSize          Float     @default(0.05)
+  strike            Float?
+  expiry            DateTime?
+  optionType        String?                         // CE, PE
+  currency          String    @default("INR")
+  sector            String?
+  industry          String?
+  isActive          Boolean   @default(true)
+  isTradable        Boolean   @default(true)
+  // Circuit limits
+  upperCircuit      Float?
+  lowerCircuit      Float?
+  // Metadata
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  orders            Order[]
+  trades            Trade[]
+  holdings          Holding[]
+  watchlistItems    WatchlistItem[]
+  alerts            Alert[]
+}
+
+// ─── ORDER MANAGEMENT ─────────────────────────────────────────────────────────
+model Order {
+  id                String        @id @default(uuid())
+  idempotencyKey    String?       @unique           // Client-provided dedup key
+  userId            String
+  instrumentId      String
+  side              String                          // BUY, SELL
+  quantity          Float
+  filledQuantity    Float         @default(0)
+  price             Float
+  triggerPrice      Float?
+  orderType         String                          // MARKET, LIMIT, SL, SL-M, GTT, IOC
+  productType       String        @default("DELIVERY") // DELIVERY, INTRADAY, MTF
+  validity          String        @default("DAY")   // DAY, IOC, GTT
+  disclosedQuantity Float?
+  status            String                          // PENDING, OPEN, PARTIALLY_FILLED, FILLED, REJECTED, CANCELLED, FAILED, EXPIRED
+  rejectionReason   String?
+  brokerOrderId     String?
+  exchangeOrderId   String?
+  parentOrderId     String?                         // For bracket/cover legs
+  basketId          String?
+  strategyId        String?
+  tags              String?                         // JSON array of tags
+  notes             String?
+  // Transaction cost snapshot at order time
+  estBrokerage      Float?
+  estSTT            Float?
+  estExchangeFee    Float?
+  estGST            Float?
+  estStampDuty      Float?
+  estTotalCost      Float?
+  estBreakEvenPrice Float?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  user              User          @relation(fields: [userId], references: [id])
+  instrument        Instrument    @relation(fields: [instrumentId], references: [id])
+  trades            Trade[]
+  events            OrderEvent[]
+}
+
+// Order lifecycle events — full immutable history per order
+model OrderEvent {
+  id          String    @id @default(uuid())
+  orderId     String
+  status      String
+  message     String?
+  metadata    String?   // JSON blob
+  timestamp   DateTime  @default(now())
+
+  order       Order     @relation(fields: [orderId], references: [id])
+}
+
+// ─── TRADE (EXECUTION) ────────────────────────────────────────────────────────
+model Trade {
+  id              String      @id @default(uuid())
+  userId          String
+  orderId         String?
+  instrumentId    String
+  side            String      // BUY, SELL
+  quantity        Float
+  price           Float
+  totalValue      Float
+  // Actual costs post-execution
+  brokerage       Float       @default(0)
+  stt             Float       @default(0)
+  exchangeFee     Float       @default(0)
+  gst             Float       @default(0)
+  stampDuty       Float       @default(0)
+  totalCost       Float       @default(0)
+  netAmount       Float       @default(0)
+  // Execution quality
+  slippage        Float?      // price - expectedPrice
+  executedAt      DateTime    @default(now())
+  // Blockchain sync
+  blockIndex      Int?
+  blockHash       String?
+  previousHash    String?
+  nonce           Int?
+
+  user            User        @relation(fields: [userId], references: [id])
+  order           Order?      @relation(fields: [orderId], references: [id])
+  instrument      Instrument  @relation(fields: [instrumentId], references: [id])
+  journalEntry    TradeJournal?
+}
+
+// ─── HOLDINGS / POSITIONS ─────────────────────────────────────────────────────
+model Holding {
+  id              String      @id @default(uuid())
+  userId          String
+  instrumentId    String
+  quantity        Float                             // Float for fractional / MF units
+  avgPrice        Float
+  realizedPL      Float       @default(0)
+  updatedAt       DateTime    @updatedAt
+
+  user            User        @relation(fields: [userId], references: [id])
+  instrument      Instrument  @relation(fields: [instrumentId], references: [id])
+
+  @@unique([userId, instrumentId])
+}
+
+// ─── WATCHLISTS ───────────────────────────────────────────────────────────────
+model Watchlist {
+  id          String          @id @default(uuid())
+  userId      String
+  name        String
+  isDefault   Boolean         @default(false)
+  sortOrder   Int             @default(0)
+  createdAt   DateTime        @default(now())
+
+  user        User            @relation(fields: [userId], references: [id])
+  items       WatchlistItem[]
+
+  @@unique([userId, name])
+}
+
+model WatchlistItem {
+  id            String      @id @default(uuid())
+  watchlistId   String
+  instrumentId  String
+  sortOrder     Int         @default(0)
+  notes         String?
+  alertPrice    Float?
+  addedAt       DateTime    @default(now())
+
+  watchlist     Watchlist   @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+  instrument    Instrument  @relation(fields: [instrumentId], references: [id])
+
+  @@unique([watchlistId, instrumentId])
+}
+
+// ─── ALERT ENGINE ─────────────────────────────────────────────────────────────
+model Alert {
+  id              String    @id @default(uuid())
+  userId          String
+  instrumentId    String?
+  name            String?
+  type            String    // PRICE_ABOVE, PRICE_BELOW, PCT_CHANGE, PORTFOLIO_PL, VOLUME, OI, INDICATOR
+  condition       String    // Serialized condition JSON
+  triggerValue    Float
+  currentValue    Float?
+  status          String    @default("ACTIVE") // ACTIVE, TRIGGERED, PAUSED, EXPIRED
+  notifyVia       String    @default("WEBSOCKET") // WEBSOCKET, EMAIL, PUSH
+  message         String?
+  triggeredAt     DateTime?
+  expiresAt       DateTime?
+  createdAt       DateTime  @default(now())
+
+  user            User      @relation(fields: [userId], references: [id])
+  instrument      Instrument? @relation(fields: [instrumentId], references: [id])
+}
+
+// ─── TRADE JOURNAL ────────────────────────────────────────────────────────────
+model TradeJournal {
+  id              String    @id @default(uuid())
+  userId          String
+  tradeId         String?   @unique
+  title           String?
+  setup           String?   // Pattern/setup name
+  thesis          String?   // Trade reasoning
+  entry           String?   // Entry notes
+  exit            String?   // Exit notes
+  mistakes        String?
+  learnings       String?
+  rating          Int?      // Self-rated 1-5
+  emotionOnEntry  String?   // FOMO, Confident, Uncertain, etc.
+  emotionOnExit   String?
+  marketCondition String?   // TRENDING, RANGING, VOLATILE
+  tags            String?   // JSON array
+  riskRewardPlanned Float?
+  riskRewardActual  Float?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user            User      @relation(fields: [userId], references: [id])
+  trade           Trade?    @relation(fields: [tradeId], references: [id])
+}
+
+// ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
+model Notification {
+  id          String    @id @default(uuid())
+  userId      String
+  type        String    // ORDER_FILLED, ALERT_TRIGGERED, SYSTEM, RISK_WARNING
+  title       String
+  body        String
+  isRead      Boolean   @default(false)
+  metadata    String?   // JSON
+  createdAt   DateTime  @default(now())
+
+  user        User      @relation(fields: [userId], references: [id])
+}
+
+// ─── AUDIT LOG ────────────────────────────────────────────────────────────────
+model AuditLog {
+  id          String    @id @default(uuid())
+  userId      String?
+  action      String    // ORDER_CREATED, ORDER_CANCELLED, LOGIN, SUBSCRIPTION_CHANGED, etc.
+  entity      String?   // Order, Trade, User, etc.
+  entityId    String?
+  ipAddress   String?
+  userAgent   String?
+  metadata    String?   // JSON
+  createdAt   DateTime  @default(now())
+
+  user        User?     @relation(fields: [userId], references: [id])
+}
+
+// ─── MARKET DATA SNAPSHOT (for freshness tracking) ───────────────────────────
+model QuoteSnapshot {
+  id              String    @id @default(uuid())
+  tradingSymbol   String
+  provider        String    // DHAN, YAHOO, TWELVE_DATA
+  price           Float
+  change          Float?
+  changePercent   Float?
+  volume          Float?
+  openInterest    Float?
+  bidPrice        Float?
+  askPrice        Float?
+  high            Float?
+  low             Float?
+  open            Float?
+  prevClose       Float?
+  vwap            Float?
+  freshness       String    @default("LIVE") // LIVE, DELAYED, STALE, UNAVAILABLE
+  confidence      Float     @default(1.0)
+  providerLatency Float?
+  exchangeTs      DateTime?
+  receivedAt      DateTime  @default(now())
+
+  @@index([tradingSymbol, receivedAt])
+}

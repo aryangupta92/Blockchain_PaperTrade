@@ -1,20 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const fs = require('fs');
-const path = require('path');
 const authMiddleware = require('../middleware/auth');
 const blockchain = require('../blockchain');
-
-const DB_PATH = path.join(__dirname, '../data/users.json');
-
-function readDB() {
-  try { return JSON.parse(fs.readFileSync(DB_PATH, 'utf8')); }
-  catch { return { users: [] }; }
-}
-function writeDB(data) {
-  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-  fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
-}
+const { PrismaClient } = require('@prisma/client');
+const dhanApi = require('../services/dhanApi');
+const prisma = new PrismaClient();
 
 // ── Subscription Plans (SEBI-compliant paper trading tiers) ──────────────────
 const PLANS = {
@@ -62,19 +52,30 @@ router.get('/plans', (req, res) => {
 });
 
 // ── POST /api/subscription/purchase ──────────────────────────────────────────
-router.post('/purchase', authMiddleware, (req, res) => {
+router.post('/purchase', authMiddleware, async (req, res) => {
   try {
     const { planId } = req.body;
     const plan = PLANS[planId];
     if (!plan) return res.status(400).json({ error: 'Invalid plan' });
 
-    const db = readDB();
-    const idx = db.users.findIndex(u => u.id === req.user.id);
-    if (idx === -1) return res.status(404).json({ error: 'User not found' });
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+    if (!user) return res.status(404).json({ error: 'User not found' });
 
     const now = new Date();
     const expiresAt = new Date(now);
     expiresAt.setMonth(expiresAt.getMonth() + 1);
+
+    // Delete existing trades and holdings for a fresh start
+    await prisma.trade.deleteMany({ where: { userId: user.id } });
+    await prisma.holding.deleteMany({ where: { userId: user.id } });
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        planId: planId,
+        balance: plan.virtualMoney
+      }
+    });
 
     const subscription = {
       planId,
@@ -88,12 +89,6 @@ router.post('/purchase', authMiddleware, (req, res) => {
       status: 'active',
       transactionId: 'TXN-' + Date.now(),
     };
-
-    db.users[idx].subscription = subscription;
-    db.users[idx].balance = plan.virtualMoney;
-    db.users[idx].holdings = {};
-    db.users[idx].trades = [];
-    writeDB(db);
 
     // Record subscription on blockchain
     blockchain.addBlock({
@@ -112,50 +107,72 @@ router.post('/purchase', authMiddleware, (req, res) => {
 });
 
 // ── GET /api/subscription/status ─────────────────────────────────────────────
-router.get('/status', authMiddleware, (req, res) => {
-  const db = readDB();
-  const user = db.users.find(u => u.id === req.user.id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+router.get('/status', authMiddleware, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({ 
+      where: { id: req.user.id },
+      include: {
+        trades: { orderBy: { executedAt: 'desc' } },
+        holdings: { include: { instrument: true } }
+      }
+    });
 
-  const sub = user.subscription;
-  if (!sub) return res.json({ active: false, reason: 'no_subscription' });
+    if (!user) return res.status(404).json({ error: 'User not found' });
 
-  const now = new Date();
-  if (new Date(sub.expiresAt) < now) {
-    return res.json({ active: false, reason: 'expired', subscription: sub });
-  }
-  if (sub.maxTrades > 0 && sub.tradesUsed >= sub.maxTrades) {
-    return res.json({ active: false, reason: 'trades_exhausted', subscription: sub });
-  }
-  if (user.balance <= 0) {
-    return res.json({ active: false, reason: 'balance_zero', subscription: sub });
-  }
+    if (user.planId === 'FREE' || user.balance <= 0) {
+      return res.json({ active: false, reason: user.balance <= 0 ? 'balance_zero' : 'no_subscription' });
+    }
 
-  const plan = PLANS[sub.planId];
-  res.json({
-    active: true,
-    subscription: sub,
-    plan,
-    balance: user.balance,
-    holdings: user.holdings || {},
-    trades: user.trades || [],
-    tradesRemaining: sub.maxTrades < 0 ? -1 : sub.maxTrades - sub.tradesUsed,
-  });
+    const plan = PLANS[user.planId];
+    
+    // --- LIVE DHAN INTEGRATION ---
+    let dhanFunds = { availabelBalance: user.balance };
+    try {
+      dhanFunds = await dhanApi.getFundLimit();
+    } catch (e) {
+      console.warn('[Subscription] Dhan limit fetch failed:', e.message);
+    }
+    const liveBalance = dhanFunds.availabelBalance > 0 ? dhanFunds.availabelBalance : (dhanFunds.sodLimit || user.balance);
+    
+    // Transform holdings back to object format expected by frontend
+    const holdingsMap = {};
+    user.holdings.forEach(h => {
+      holdingsMap[h.instrument?.tradingSymbol || h.instrumentId] = {
+        quantity: h.quantity,
+        avgPrice: h.avgPrice
+      };
+    });
+
+    // Mock subscription object for UI compatibility
+    const sub = {
+      planId: user.planId,
+      planName: plan.name,
+      initialBalance: plan.virtualMoney,
+      virtualBalance: liveBalance,
+      status: 'active',
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      maxTrades: plan.maxTrades,
+      tradesUsed: user.trades.length
+    };
+
+    res.json({
+      active: true,
+      subscription: sub,
+      plan,
+      balance: liveBalance,
+      holdings: holdingsMap,
+      trades: user.trades,
+      tradesRemaining: sub.maxTrades < 0 ? -1 : sub.maxTrades - sub.tradesUsed,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── POST /api/subscription/deduct-trade ──────────────────────────────────────
 router.post('/deduct-trade', authMiddleware, (req, res) => {
-  const db = readDB();
-  const idx = db.users.findIndex(u => u.id === req.user.id);
-  if (idx === -1) return res.status(404).json({ error: 'User not found' });
-
-  const sub = db.users[idx].subscription;
-  if (!sub) return res.status(403).json({ error: 'No active subscription' });
-  if (sub.maxTrades > 0) {
-    db.users[idx].subscription.tradesUsed++;
-  }
-  writeDB(db);
-  res.json({ success: true, tradesUsed: db.users[idx].subscription.tradesUsed });
+  // Ignored in new DB logic; trades are counted via DB records
+  res.json({ success: true, tradesUsed: 0 });
 });
 
 module.exports = router;

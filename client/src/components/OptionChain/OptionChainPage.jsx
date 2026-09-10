@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import './OptionChain.css';
 import api from '../../services/api';
 import { RefreshCw, ChevronDown, Target, TrendingUp, TrendingDown } from 'lucide-react';
+import OrderTicket from '../Trading/OrderTicket';
 
 function fmt(n, d = 2) {
   if (n === null || n === undefined) return '—';
@@ -19,7 +20,7 @@ function fmtLakhs(n) {
   return (n / 100000).toFixed(2);
 }
 
-export default function OptionChainPage({ symbol = '^NSEI', inModal = false, onTrade, balance }) {
+export default function OptionChainPage({ symbol = '^NSEI', inModal = false, onTrade, balance, quotes = {}, holdings = {} }) {
   const [chain, setChain] = useState(null);
   const [loading, setLoading] = useState(true);
   const [expiry, setExpiry] = useState('');
@@ -46,19 +47,6 @@ export default function OptionChainPage({ symbol = '^NSEI', inModal = false, onT
       atmRowRef.current.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }
   }, [chain]);
-
-  const handleOptionTrade = async (side) => {
-    if (!tradeModal || !onTrade) return;
-    const { type, strike, price } = tradeModal;
-    const underlying = symbol.replace('^', '');
-    const optType = type === 'call' ? 'CE' : 'PE';
-    const optSym = `${underlying} ${expiry} ${strike} ${optType}`;
-    try {
-      // Simulate options as premium × lotSize (contract multiplier)
-      await onTrade({ type: side, symbol: optSym, quantity: Number(chain?.lotSize || 1), price, orderType: 'market' });
-    } catch (e) { console.error('Option trade error:', e); }
-    setTradeModal(null);
-  };
 
   if (loading) {
     return (
@@ -338,26 +326,21 @@ export default function OptionChainPage({ symbol = '^NSEI', inModal = false, onT
       </div>
 
       {/* ── Trade Modal ── */}
-      {tradeModal && (
-        <div className="oc-trade-overlay">
-          <div className="oc-trade-modal">
-            <div className="oc-trade-modal-title">
-              {symbol.replace('^','NIFTY')} {expiry} {tradeModal.strike} {tradeModal.type.toUpperCase()}
-            </div>
-            <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--text-primary)', margin: '8px 0' }}>
-              ₹{fmt(tradeModal.price)}
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 16 }}>
-              Lot size: {lotSize} shares · Value: ₹{fmt(tradeModal.price * lotSize)}
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn-gain" style={{ flex: 1 }} onClick={() => handleOptionTrade('buy')}>BUY</button>
-              <button className="btn-loss" style={{ flex: 1 }} onClick={() => handleOptionTrade('sell')}>SELL</button>
-              <button className="btn btn-ghost" onClick={() => setTradeModal(null)}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <OrderTicket
+        isOpen={!!tradeModal}
+        onClose={() => setTradeModal(null)}
+        onTrade={onTrade}
+        initialSide={tradeModal?.side || 'buy'}
+        initialSegment="FO"
+        initialUnderlying={symbol.replace('^', '').replace('NSE', '').trim()}
+        initialExpiry={expiry}
+        initialStrike={tradeModal?.strike ? String(tradeModal.strike) : ''}
+        initialOptionType={tradeModal?.type === 'call' ? 'CE' : 'PE'}
+        initialPrice={tradeModal?.price || 0}
+        quotes={quotes}
+        holdings={holdings}
+        balance={balance}
+      />
     </div>
   );
 }

@@ -1,167 +1,114 @@
+/**
+ * TradePage.jsx — Rebuilt Broker-Style Trading Interface
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Now uses the universal OrderTicket component for all order placements.
+ * This page becomes a "trading desk" overview showing:
+ *  - Quick order entry (top bar)
+ *  - Live positions and P&L
+ *  - Recent trade history for the selected symbol
+ *  - Candlestick chart
+ *  - Watchlist quick-trade
+ */
+
 import { useState, useEffect } from 'react';
 import './Trading.css';
-import { Zap, AlertCircle, CheckCircle, TrendingUp, Calendar, Clock } from 'lucide-react';
+import OrderTicket from './OrderTicket';
+import { Zap, TrendingUp, TrendingDown, BarChart2, RefreshCw, ChevronRight, AlertCircle } from 'lucide-react';
 import api from '../../services/api';
-import { checkPositionLimit, getMarketStatus } from '../../utils/sebi';
 
-// Removed hardcoded STOCKS array so the UI never defaults to a limited list again.
-
-function fmtPrice(n) {
-  return n?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '—';
+function fmtINR(n) {
+  if (!n && n !== 0) return '—';
+  return '₹' + Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
-
-function fmtPercent(n) {
-  return (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
+function fmtPct(n) {
+  return (n >= 0 ? '+' : '') + Number(n).toFixed(2) + '%';
 }
 
 export default function TradePage({ quotes, holdings, balance, onTrade, watchlist, onAddWatch }) {
-  const [symbol, setSymbol] = useState(watchlist?.[0] || 'RELIANCE');
-  const [quantity, setQuantity] = useState(1);
-  const [orderType, setOrderType] = useState('market');
-  const [limitPrice, setLimitPrice] = useState('');
-  const [side, setSide] = useState('buy');
-  const [tradeType, setTradeType] = useState('intraday'); // 'intraday' | 'delivery'
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null); // { success, message, trade }
-  const [error, setError] = useState('');
-  const [chartData, setChartData] = useState([]);
-  const [loadingChart, setLoadingChart] = useState(false);
-  const [trades, setTrades] = useState([]);
+  const [selectedSymbol, setSelectedSymbol]   = useState(watchlist?.[0] || 'RELIANCE');
+  const [ticketOpen, setTicketOpen]           = useState(false);
+  const [ticketSide, setTicketSide]           = useState('buy');
+  const [ticketSegment, setTicketSegment]     = useState('EQ');
+  const [ticketInitPrice, setTicketInitPrice] = useState(0);
+  const [trades, setTrades]                   = useState([]);
+  const [chartData, setChartData]             = useState([]);
+  const [loadingChart, setLoadingChart]       = useState(false);
+  const [refreshing, setRefreshing]           = useState(false);
 
+  const liveQuote  = quotes[selectedSymbol] || null;
+  const livePrice  = liveQuote?.price || 0;
+  const holding    = holdings[selectedSymbol] || null;
+  const heldQty    = holding?.quantity || 0;
+  const avgPrice   = holding?.avgPrice || 0;
+  const unrealizedPL = heldQty !== 0 ? (livePrice - avgPrice) * heldQty : 0;
+  const pnlPct     = heldQty !== 0 && avgPrice ? ((livePrice - avgPrice) / avgPrice) * 100 : 0;
 
-  const liveQuote = quotes[symbol] || null;
-  const livePrice = liveQuote?.price || 0;
-  const execPrice = orderType === 'market' ? livePrice : (Number(limitPrice) || 0);
-  const totalValue = execPrice * Number(quantity);
-  const held = holdings[symbol]?.quantity || 0;
-  const avgBuy = holdings[symbol]?.avgPrice || 0;
-  const unrealizedPL =
-    held === 0
-      ? 0
-      : held > 0
-        ? (livePrice - avgBuy) * held
-        : (avgBuy - livePrice) * Math.abs(held);
-
-  // Load chart data for display
+  // Load chart data
   useEffect(() => {
-    if (!symbol) return;
-    const loadChart = async () => {
-      setLoadingChart(true);
-      try {
-        const data = await api.getCandles(symbol, '1d', '1m');
-        setChartData(data || []);
-      } catch (e) {
-        console.error('Chart load error:', e);
-      } finally {
-        setLoadingChart(false);
-      }
-    };
-    loadChart();
-  }, [symbol]);
+    if (!selectedSymbol) return;
+    setLoadingChart(true);
+    api.getCandles(selectedSymbol, '1d', '1m')
+      .then(data => setChartData(data || []))
+      .catch(() => setChartData([]))
+      .finally(() => setLoadingChart(false));
+  }, [selectedSymbol]);
 
-  // Get all trades for this symbol
-  useEffect(() => {
-    const loadTrades = async () => {
-      try {
-        const response = await api.executeTrade({ method: 'GET' }).catch(() => ({ trades: [] }));
-        const symbolTrades = (response.trades || []).filter(t => t.symbol === symbol);
-        setTrades(symbolTrades);
-      } catch (e) {
-        console.error('Trades load error:', e);
-      }
-    };
-    loadTrades();
-  }, [symbol]);
-
-  // SEBI validations
-  const validateTrade = () => {
-    const errors = [];
-    
-    if (!execPrice) { errors.push('Price not available'); }
-    if (Number(quantity) <= 0) { errors.push('Invalid quantity'); }
-    
-    // Check position limit
-    if (side === 'buy') {
-      const posLimit = checkPositionLimit(symbol, totalValue, Math.abs(held) * avgBuy, balance);
-      if (!posLimit.allowed) { errors.push(posLimit.reason); }
-    }
-    
-    // Check balance for buy orders
-    if (side === 'buy' && balance < totalValue) {
-      errors.push('Insufficient balance for this trade');
-    }
-    
-    // Check quantity for sell
-    if (side === 'sell' && held < quantity) {
-      errors.push(`Cannot sell ${quantity} shares. You hold only ${held} shares.`);
-    }
-    
-    // Intraday settlement rule: must close before market close
-    if (tradeType === 'intraday') {
-      const status = getMarketStatus();
-      if (!status.open) {
-        errors.push('Intraday trades can only be placed during market hours (9:15 AM - 3:30 PM)');
-      }
-    }
-    
-    return errors;
-  };
-
-  const handleTrade = async () => {
-    setError('');
-    setResult(null);
-    
-    const validationErrors = validateTrade();
-    if (validationErrors.length > 0) {
-      setError(validationErrors[0]);
-      return;
-    }
-    
-    setLoading(true);
+  // Load recent trades
+  const loadTrades = async () => {
     try {
-      const trade = await onTrade({ 
-        type: side, 
-        symbol, 
-        quantity: Number(quantity), 
-        price: execPrice, 
-        orderType,
-        tradeType 
-      });
-      setResult({ 
-        success: true, 
-        message: `${side.toUpperCase()} order for ${quantity} x ${symbol} @ ₹${fmtPrice(execPrice)} (${tradeType}) executed!`, 
-        trade 
-      });
-      setQuantity(1);
-      setLimitPrice('');
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
+      setRefreshing(true);
+      const response = await api.getTrades(30, 0);
+      setTrades(response.trades || []);
+    } catch (e) { console.error(e); }
+    finally { setRefreshing(false); }
   };
 
-  // Get entry price for current position
-  const entryPrice = held !== 0 ? avgBuy : null;
-  const pnlPercent = held !== 0 ? ((livePrice - avgBuy) / avgBuy) * 100 : 0;
+  useEffect(() => { loadTrades(); }, [selectedSymbol]);
+
+  const openTicket = (side, segment = 'EQ', price = livePrice) => {
+    setTicketSide(side);
+    setTicketSegment(segment);
+    setTicketInitPrice(price);
+    setTicketOpen(true);
+  };
+
+  // All holdings for positions panel
+  const allHoldings = Object.entries(holdings).map(([sym, h]) => {
+    const q = quotes[sym];
+    const ltp = q?.price || h.avgPrice;
+    const upl = (ltp - h.avgPrice) * h.quantity;
+    const uplPct = ((ltp - h.avgPrice) / h.avgPrice) * 100;
+    return { symbol: sym, ...h, ltp, upl, uplPct };
+  });
+
+  const symbolTrades = trades.filter(t =>
+    (t.instrument?.tradingSymbol || '').replace('.NS', '') === selectedSymbol ||
+    t.instrument?.tradingSymbol === selectedSymbol
+  ).slice(0, 6);
 
   return (
     <div className="trade-page">
-      {/* Left: Order Panel */}
+      {/* ── Left Panel: Order Actions ───────────────────────────────────────────── */}
       <div className="card trade-panel">
         <div className="trade-panel-header">
           <Zap size={16} style={{ color: 'var(--accent-primary)' }} />
-          <span>Place Order</span>
+          <span>Quick Trade</span>
         </div>
 
-        {/* Symbol Display */}
+        {/* Symbol Selector from Watchlist */}
         <div className="form-group">
           <label className="form-label">Selected Symbol</label>
-          <div className="input" style={{ background: 'var(--bg-layer)', border: 'none', fontWeight: 'bold' }}>
-            {symbol}
-          </div>
-          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
-            Search from TopBar or click Watchlist to change.
+          <div className="tabs" style={{ flexWrap: 'wrap', gap: 4 }}>
+            {watchlist.slice(0, 8).map(s => (
+              <button
+                key={s}
+                className={`tab ${selectedSymbol === s ? 'active' : ''}`}
+                onClick={() => setSelectedSymbol(s)}
+                style={{ fontSize: 11, padding: '5px 9px' }}
+              >
+                {s}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -169,310 +116,259 @@ export default function TradePage({ quotes, holdings, balance, onTrade, watchlis
         {liveQuote && (
           <div className="live-price-box">
             <div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Market Price</div>
-              <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'var(--font-mono)', color: liveQuote.changePercent >= 0 ? 'var(--gain)' : 'var(--loss)' }}>
-                ₹{fmtPrice(livePrice)}
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>LTP</div>
+              <div style={{ fontSize: 24, fontWeight: 800, fontFamily: 'var(--font-mono)', color: liveQuote.changePercent >= 0 ? 'var(--gain)' : 'var(--loss)' }}>
+                {fmtINR(livePrice)}
               </div>
             </div>
             <div style={{ textAlign: 'right' }}>
               <div className={`mover-change-pill ${liveQuote.changePercent >= 0 ? 'gain' : 'loss'}`}>
                 {liveQuote.changePercent >= 0 ? '+' : ''}{liveQuote.changePercent?.toFixed(2)}%
               </div>
-              {held !== 0 && (
-                <div style={{ fontSize: 11, marginTop: 6, color: 'var(--text-muted)' }}>
-                  Position: {held > 0 ? held : `-${Math.abs(held)} (SHORT)`} @ ₹{fmtPrice(avgBuy)}
-                  <span className={unrealizedPL >= 0 ? 'gain' : 'loss'} style={{ marginLeft: 4 }}>
-                    ({unrealizedPL >= 0 ? '+' : ''}₹{Math.abs(unrealizedPL).toFixed(0)})
-                  </span>
-                </div>
-              )}
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                Vol: {liveQuote.volume ? (liveQuote.volume / 1e6).toFixed(2) + 'M' : '—'}
+              </div>
             </div>
           </div>
         )}
 
-        {/* Buy / Sell Tabs */}
-        <div className="trade-side-toggle">
-          <button className={`side-btn buy-btn ${side === 'buy' ? 'active' : ''}`} onClick={() => setSide('buy')}>BUY</button>
-          <button className={`side-btn sell-btn ${side === 'sell' ? 'active' : ''}`} onClick={() => setSide('sell')}>SELL</button>
-        </div>
-
-        {/* Trade Type Selector - INTRADAY vs DELIVERY */}
-        <div className="form-group">
-          <label className="form-label">Trade Type</label>
-          <div className="tabs">
-            <button 
-              className={`tab ${tradeType === 'intraday' ? 'active' : ''}`} 
-              onClick={() => setTradeType('intraday')}
-              title="Position must be squared off same day"
-            >
-              <Clock size={13} style={{ marginRight: 4 }} />
-              Intraday
-            </button>
-            <button 
-              className={`tab ${tradeType === 'delivery' ? 'active' : ''}`} 
-              onClick={() => setTradeType('delivery')}
-              title="Hold position for multiple days"
-            >
-              <Calendar size={13} style={{ marginRight: 4 }} />
-              Delivery
-            </button>
-          </div>
-          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6 }}>
-            {tradeType === 'intraday' 
-              ? 'Must close before market close (3:30 PM)' 
-              : 'Can hold for multiple days'}
-          </div>
-        </div>
-
-        {/* Order Type */}
-        <div className="form-group">
-          <label className="form-label">Order Type</label>
-          <div className="tabs">
-            <button className={`tab ${orderType === 'market' ? 'active' : ''}`} onClick={() => setOrderType('market')}>Market</button>
-            <button className={`tab ${orderType === 'limit' ? 'active' : ''}`} onClick={() => setOrderType('limit')}>Limit</button>
-          </div>
-        </div>
-
-        {/* Limit Price */}
-        {orderType === 'limit' && (
-          <div className="form-group">
-            <label className="form-label">Limit Price (₹)</label>
-            <input type="number" className="input" value={limitPrice} onChange={e => setLimitPrice(e.target.value)} placeholder="Enter limit price" />
-          </div>
-        )}
-
-        {/* Quantity */}
-        <div className="form-group">
-          <label className="form-label">Quantity</label>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button className="btn btn-ghost" style={{ padding: '7px 12px' }} onClick={() => setQuantity(q => Math.max(1, Number(q) - 1))}>−</button>
-            <input type="number" className="input" value={quantity} onChange={e => setQuantity(e.target.value)} min={1} style={{ textAlign: 'center' }} />
-            <button className="btn btn-ghost" style={{ padding: '7px 12px' }} onClick={() => setQuantity(q => Number(q) + 1)}>+</button>
-          </div>
-        </div>
-
-        {/* Order Summary */}
-        <div className="order-summary">
-          <div className="summary-row"><span>Price</span><span>₹{fmtPrice(execPrice)}</span></div>
-          <div className="summary-row"><span>Quantity</span><span>{quantity}</span></div>
-          <div className="summary-row total"><span>Total Value</span><span>₹{fmtPrice(totalValue)}</span></div>
-          {side === 'buy' && (
-            <div className="summary-row"><span>Available Balance</span><span className={balance < totalValue ? 'loss' : 'gain'}>₹{fmtPrice(balance)}</span></div>
-          )}
-        </div>
-
-        {/* Error / Result */}
-        {error && (
-          <div className="trade-alert error">
-            <AlertCircle size={14} />
-            {error}
-          </div>
-        )}
-        {result?.success && (
-          <div className="trade-alert success">
-            <CheckCircle size={14} />
-            {result.message}
-            {result.trade?.blockHash && (
-              <div style={{ fontSize: 10, marginTop: 4, fontFamily: 'var(--font-mono)', opacity: 0.7 }}>
-                Block #{result.trade.blockIndex} · {result.trade.blockHash?.slice(0, 20)}…
+        {/* Current Position Summary */}
+        {heldQty !== 0 && (
+          <div style={{ padding: '10px 12px', background: unrealizedPL >= 0 ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)', borderRadius: 10, border: `1px solid ${unrealizedPL >= 0 ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}` }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Open Position</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+              <div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Qty / Avg</div>
+                <div style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{heldQty > 0 ? '+' : ''}{heldQty} @ {fmtINR(avgPrice)}</div>
               </div>
-            )}
-          </div>
-        )}
-
-        {/* Execute Button */}
-        <button
-          className={side === 'buy' ? 'btn-gain' : 'btn-loss'}
-          onClick={handleTrade}
-          disabled={loading || !execPrice}
-          style={{ marginTop: 8 }}
-        >
-          {loading ? 'Executing…' : `${side === 'buy' ? '▲ BUY' : '▼ SELL'} ${symbol}`}
-        </button>
-      </div>
-
-      {/* Right: Holdings + Chart + Watchlist */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, flex: 1 }}>
-        {/* Chart Display with Entry Price and PnL */}
-        <div className="card chart-container" style={{ minHeight: 300 }}>
-          <div className="section-header">
-            <TrendingUp size={16} style={{ color: 'var(--accent-primary)' }} />
-            <span className="section-title">{symbol} Price Action</span>
-          </div>
-          
-          {held !== 0 && (
-            <div style={{ padding: '8px 12px', background: 'rgba(16,185,129,0.1)', border: '1px solid var(--gain)', borderRadius: 6, marginBottom: 10 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, fontSize: 12 }}>
-                <div>
-                  <div style={{ color: 'var(--text-muted)', fontSize: 10 }}>Entry Price</div>
-                  <div style={{ fontWeight: 800, fontFamily: 'var(--font-mono)' }}>₹{fmtPrice(entryPrice)}</div>
-                </div>
-                <div>
-                  <div style={{ color: 'var(--text-muted)', fontSize: 10 }}>Current P&L</div>
-                  <div style={{ fontWeight: 800, fontFamily: 'var(--font-mono)', color: pnlPercent >= 0 ? 'var(--gain)' : 'var(--loss)' }}>
-                    {fmtPercent(pnlPercent)} (₹{fmtPrice(unrealizedPL)})
-                  </div>
+              <div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Unrealized P&L</div>
+                <div style={{ fontSize: 14, fontWeight: 800, fontFamily: 'var(--font-mono)', color: unrealizedPL >= 0 ? 'var(--gain)' : 'var(--loss)' }}>
+                  {unrealizedPL >= 0 ? '+' : ''}{fmtINR(unrealizedPL)} ({fmtPct(pnlPct)})
                 </div>
               </div>
             </div>
-          )}
-          
-          {loadingChart ? (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 200, color: 'var(--text-muted)' }}>
-              <div className="spinner" style={{ width: 20, height: 20, borderWidth: 2 }} />
-            </div>
-          ) : chartData.length > 0 ? (
-            <div style={{ height: 240, background: 'var(--bg-layer)', borderRadius: 6, padding: 8, position: 'relative' }}>
-              {/* Simplified Candle View */}
-              <div style={{ display: 'flex', alignItems: 'flex-end', height: '100%', gap: 1 }}>
-                {(() => {
-                  const recentData = chartData.slice(-50);
-                  const high = Math.max(...recentData.map(c => c.high));
-                  const low = Math.min(...recentData.map(c => c.low));
-                  const range = high - low || 1;
-                  
-                  return (
-                    <>
-                      {recentData.map((candle, idx) => {
-                        const candleHigh = ((candle.high - low) / range) * 220;
-                        const candleLow = ((candle.low - low) / range) * 220;
-                        const isUp = candle.close >= candle.open;
-                        return (
-                          <div
-                            key={idx}
-                            style={{
-                              flex: 1,
-                              position: 'relative',
-                              height: '100%',
-                              display: 'flex',
-                              alignItems: 'flex-end',
-                              justifyContent: 'center',
-                            }}
-                          >
-                            {/* Wick */}
-                            <div style={{
-                              position: 'absolute',
-                              bottom: `calc(${candleLow}px)`,
-                              width: 1,
-                              height: `${candleHigh - candleLow}px`,
-                              background: isUp ? 'var(--gain)' : 'var(--loss)',
-                              opacity: 0.5,
-                            }} />
-                            {/* Body */}
-                            <div style={{
-                              width: '60%',
-                              height: `${Math.abs(candle.close - candle.open) / range * 220 || 2}px`,
-                              background: isUp ? 'var(--gain)' : 'var(--loss)',
-                              borderRadius: 1,
-                              marginBottom: `${(Math.min(candle.open, candle.close) - low) / range * 220}px`,
-                            }} />
-                          </div>
-                        );
-                      })}
-                      
-                      {/* Entry Line with PnL */}
-                      {held !== 0 && entryPrice !== null && (
-                        <div style={{
-                          position: 'absolute',
-                          left: 0,
-                          right: 0,
-                          bottom: `calc(${Math.max(0, Math.min(220, ((entryPrice - low) / range) * 220))}px + 8px)`,
-                          borderTop: `1px dashed ${pnlPercent >= 0 ? 'var(--gain)' : 'var(--loss)'}`,
-                          opacity: 0.8,
-                          zIndex: 10,
-                          pointerEvents: 'none'
-                        }}>
-                          <div style={{
-                            position: 'absolute',
-                            right: 4,
-                            top: -20,
-                            background: pnlPercent >= 0 ? 'var(--gain)' : 'var(--loss)',
-                            color: '#000',
-                            fontSize: 10,
-                            fontWeight: 800,
-                            padding: '2px 6px',
-                            borderRadius: 4,
-                            fontFamily: 'var(--font-mono)'
-                          }}>
-                            Entry: ₹{fmtPrice(entryPrice)} | P&L: {fmtPercent(pnlPercent)}
-                          </div>
-                        </div>
-                      )}
-                    </>
-                  );
-                })()}
-              </div>
-            </div>
-          ) : (
-            <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
-              No chart data available
-            </div>
-          )}
-        </div>
-
-        {/* Quick Stats */}
-        <div className="card">
-          <div className="section-header">
-            <span className="section-title">Your {symbol} Position</span>
           </div>
-          {held !== 0 ? (
-            <div className="position-stats">
-              <div className="stat-box">
-                <div className="stat-label">Quantity</div>
-                <div className="stat-value">{held > 0 ? held : `-${Math.abs(held)} (SHORT)`}</div>
-              </div>
-              <div className="stat-box">
-                <div className="stat-label">Avg Price</div>
-                <div className="stat-value">₹{fmtPrice(avgBuy)}</div>
-              </div>
-              <div className="stat-box">
-                <div className="stat-label">Invested</div>
-                <div className="stat-value">₹{fmtPrice(Math.abs(held) * avgBuy)}</div>
-              </div>
-              <div className="stat-box">
-                <div className="stat-label">Current Value</div>
-                <div className="stat-value">₹{fmtPrice(Math.abs(held) * livePrice)}</div>
-              </div>
-              <div className="stat-box" style={{ gridColumn: '1/-1' }}>
-                <div className="stat-label">Unrealized P&L</div>
-                <div className={`stat-value big ${unrealizedPL >= 0 ? 'gain' : 'loss'}`}>
-                  {unrealizedPL >= 0 ? '+' : ''}₹{Math.abs(unrealizedPL).toFixed(2)}
-                  <span style={{ fontSize: 13, marginLeft: 6 }}>
-                    ({fmtPercent(pnlPercent)})
-                  </span>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div style={{ color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', padding: '20px 0' }}>
-              No position in {symbol}. Place a BUY order to start.
-            </div>
-          )}
+        )}
+
+        {/* Action Buttons */}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn-gain" style={{ flex: 1, fontSize: 13 }} onClick={() => openTicket('buy', 'EQ')}>
+            ▲ BUY EQ
+          </button>
+          <button className="btn-loss" style={{ flex: 1, fontSize: 13 }} onClick={() => openTicket('sell', 'EQ')}>
+            ▼ SELL EQ
+          </button>
         </div>
 
-        {/* Watchlist quick view */}
-        <div className="card">
-          <div className="section-title" style={{ marginBottom: 10 }}>Watchlist</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            onClick={() => openTicket('buy', 'FO')}
+            style={{ flex: 1, padding: '9px', borderRadius: 8, border: '1px solid var(--accent-primary)', background: 'rgba(16,185,129,0.08)', color: 'var(--accent-primary)', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}
+          >
+            ▲ BUY F&O
+          </button>
+          <button
+            onClick={() => openTicket('sell', 'FO')}
+            style={{ flex: 1, padding: '9px', borderRadius: 8, border: '1px solid var(--loss)', background: 'rgba(239,68,68,0.08)', color: 'var(--loss)', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}
+          >
+            ▼ SELL F&O
+          </button>
+        </div>
+
+        {/* Watchlist Quick-Trade rows */}
+        <div className="card" style={{ padding: '10px 0' }}>
+          <div className="section-title" style={{ padding: '0 12px', marginBottom: 8 }}>Watchlist</div>
           {watchlist.slice(0, 8).map(s => {
             const q = quotes[s];
+            const isSelected = s === selectedSymbol;
             return (
-              <div key={s} className="watchlist-row" onClick={() => setSymbol(s)}>
-                <span style={{ fontWeight: 600, fontSize: 13 }}>{s}</span>
-                <div style={{ display: 'flex', align: 'center', gap: 8 }}>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-                    {q ? '₹' + fmtPrice(q.price) : '—'}
-                  </span>
-                  {q && (
-                    <span className={q.changePercent >= 0 ? 'gain' : 'loss'} style={{ fontSize: 11, fontWeight: 600 }}>
-                      {q.changePercent >= 0 ? '+' : ''}{q.changePercent?.toFixed(2)}%
-                    </span>
-                  )}
+              <div
+                key={s}
+                className="watchlist-row"
+                style={{ cursor: 'pointer', background: isSelected ? 'rgba(16,185,129,0.06)' : 'transparent' }}
+                onClick={() => setSelectedSymbol(s)}
+              >
+                <span style={{ fontWeight: 700, fontSize: 13 }}>{s}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{q ? fmtINR(q.price) : '—'}</span>
+                  {q && <span className={q.changePercent >= 0 ? 'gain' : 'loss'} style={{ fontSize: 11, fontWeight: 700 }}>{fmtPct(q.changePercent)}</span>}
+                  <button
+                    onClick={e => { e.stopPropagation(); setSelectedSymbol(s); openTicket('buy', 'EQ', q?.price || 0); }}
+                    style={{ padding: '2px 7px', borderRadius: 5, border: '1px solid var(--gain)', background: 'transparent', color: 'var(--gain)', fontSize: 10, fontWeight: 700, cursor: 'pointer' }}
+                  >B</button>
+                  <button
+                    onClick={e => { e.stopPropagation(); setSelectedSymbol(s); openTicket('sell', 'EQ', q?.price || 0); }}
+                    style={{ padding: '2px 7px', borderRadius: 5, border: '1px solid var(--loss)', background: 'transparent', color: 'var(--loss)', fontSize: 10, fontWeight: 700, cursor: 'pointer' }}
+                  >S</button>
                 </div>
               </div>
             );
           })}
         </div>
       </div>
+
+      {/* ── Right Panel: Chart + Positions + History ────────────────────────────── */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, flex: 1, minWidth: 0 }}>
+        {/* Chart */}
+        <div className="card chart-container" style={{ minHeight: 280 }}>
+          <div className="section-header">
+            <BarChart2 size={16} style={{ color: 'var(--accent-primary)' }} />
+            <span className="section-title">{selectedSymbol} — 1D Chart</span>
+            {liveQuote && (
+              <span className={liveQuote.changePercent >= 0 ? 'gain' : 'loss'} style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700 }}>
+                {fmtINR(livePrice)} {fmtPct(liveQuote.changePercent)}
+              </span>
+            )}
+          </div>
+          {loadingChart ? (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 200 }}>
+              <div className="spinner" style={{ width: 20, height: 20, borderWidth: 2 }} />
+            </div>
+          ) : chartData.length > 0 ? (
+            <div style={{ height: 220, position: 'relative', padding: '0 8px' }}>
+              <div style={{ display: 'flex', alignItems: 'flex-end', height: '100%', gap: 1 }}>
+                {(() => {
+                  const data = chartData.slice(-80);
+                  const high = Math.max(...data.map(c => c.high));
+                  const low  = Math.min(...data.map(c => c.low));
+                  const rng  = high - low || 1;
+                  return data.map((c, i) => {
+                    const bodyH = Math.abs(c.close - c.open) / rng * 210 || 2;
+                    const bodyB = (Math.min(c.open, c.close) - low) / rng * 210;
+                    const isUp  = c.close >= c.open;
+                    const col   = isUp ? 'var(--gain)' : 'var(--loss)';
+                    return (
+                      <div key={i} style={{ flex: 1, position: 'relative', height: '100%', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+                        <div style={{ position: 'absolute', bottom: `${(c.low - low) / rng * 210}px`, width: 1, height: `${(c.high - c.low) / rng * 210}px`, background: col, opacity: 0.5 }} />
+                        <div style={{ width: '60%', height: `${bodyH}px`, background: col, borderRadius: 1, marginBottom: `${bodyB}px` }} />
+                      </div>
+                    );
+                  });
+                })()}
+                {/* Entry price line */}
+                {heldQty !== 0 && (() => {
+                  const data = chartData.slice(-80);
+                  const high = Math.max(...data.map(c => c.high));
+                  const low  = Math.min(...data.map(c => c.low));
+                  const rng  = high - low || 1;
+                  const pct  = Math.max(0, Math.min(210, ((avgPrice - low) / rng) * 210));
+                  return (
+                    <div style={{ position: 'absolute', left: 8, right: 8, bottom: `${pct + 8}px`, borderTop: `1.5px dashed ${pnlPct >= 0 ? 'var(--gain)' : 'var(--loss)'}`, pointerEvents: 'none', zIndex: 5 }}>
+                      <div style={{ position: 'absolute', right: 4, top: -18, background: pnlPct >= 0 ? 'var(--gain)' : 'var(--loss)', color: '#000', fontSize: 9, fontWeight: 800, padding: '2px 5px', borderRadius: 4, fontFamily: 'var(--font-mono)' }}>
+                        Avg: {fmtINR(avgPrice)} · {fmtPct(pnlPct)}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          ) : (
+            <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+              No chart data available for {selectedSymbol}
+            </div>
+          )}
+        </div>
+
+        {/* All Positions */}
+        {allHoldings.length > 0 && (
+          <div className="card">
+            <div className="section-header">
+              <TrendingUp size={15} style={{ color: 'var(--accent-primary)' }} />
+              <span className="section-title">Open Positions ({allHoldings.length})</span>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                    {['Symbol', 'Qty', 'Avg Price', 'LTP', 'Invested', 'Current', 'P&L', ''].map(h => (
+                      <th key={h} style={{ padding: '6px 10px', textAlign: 'left', color: 'var(--text-muted)', fontWeight: 600, fontSize: 11 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {allHoldings.map(h => (
+                    <tr key={h.symbol} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', cursor: 'pointer' }} onClick={() => setSelectedSymbol(h.symbol)}>
+                      <td style={{ padding: '8px 10px', fontWeight: 700 }}>{h.symbol}</td>
+                      <td style={{ padding: '8px 10px', fontFamily: 'var(--font-mono)', color: h.quantity > 0 ? 'var(--gain)' : 'var(--loss)' }}>{h.quantity > 0 ? '+' : ''}{h.quantity}</td>
+                      <td style={{ padding: '8px 10px', fontFamily: 'var(--font-mono)' }}>{fmtINR(h.avgPrice)}</td>
+                      <td style={{ padding: '8px 10px', fontFamily: 'var(--font-mono)', color: h.upl >= 0 ? 'var(--gain)' : 'var(--loss)' }}>{fmtINR(h.ltp)}</td>
+                      <td style={{ padding: '8px 10px', fontFamily: 'var(--font-mono)' }}>{fmtINR(Math.abs(h.quantity) * h.avgPrice)}</td>
+                      <td style={{ padding: '8px 10px', fontFamily: 'var(--font-mono)' }}>{fmtINR(Math.abs(h.quantity) * h.ltp)}</td>
+                      <td style={{ padding: '8px 10px', fontFamily: 'var(--font-mono)', color: h.upl >= 0 ? 'var(--gain)' : 'var(--loss)', fontWeight: 700 }}>
+                        {h.upl >= 0 ? '+' : ''}{fmtINR(h.upl)} ({fmtPct(h.uplPct)})
+                      </td>
+                      <td style={{ padding: '8px 6px' }}>
+                        <button
+                          onClick={e => { e.stopPropagation(); setSelectedSymbol(h.symbol); openTicket('sell', 'EQ', h.ltp); }}
+                          style={{ padding: '3px 9px', borderRadius: 5, border: '1px solid var(--loss)', background: 'rgba(239,68,68,0.1)', color: 'var(--loss)', fontSize: 10, fontWeight: 700, cursor: 'pointer' }}
+                        >Exit</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Recent Trade History */}
+        <div className="card">
+          <div className="section-header">
+            <RefreshCw size={14} style={{ color: 'var(--accent-primary)', cursor: 'pointer' }} onClick={loadTrades} />
+            <span className="section-title">Recent Trades — {selectedSymbol}</span>
+            {refreshing && <div className="spinner" style={{ width: 12, height: 12, borderWidth: 2, marginLeft: 'auto' }} />}
+          </div>
+          {symbolTrades.length > 0 ? (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                    {['Side', 'Qty', 'Price', 'Total', 'Charges', 'Time', 'Block'].map(h => (
+                      <th key={h} style={{ padding: '5px 10px', textAlign: 'left', color: 'var(--text-muted)', fontWeight: 600, fontSize: 11 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {symbolTrades.map(t => (
+                    <tr key={t.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                      <td style={{ padding: '7px 10px', fontWeight: 800, color: t.side === 'BUY' ? 'var(--gain)' : 'var(--loss)' }}>{t.side}</td>
+                      <td style={{ padding: '7px 10px', fontFamily: 'var(--font-mono)' }}>{t.quantity}</td>
+                      <td style={{ padding: '7px 10px', fontFamily: 'var(--font-mono)' }}>{fmtINR(t.price)}</td>
+                      <td style={{ padding: '7px 10px', fontFamily: 'var(--font-mono)' }}>{fmtINR(t.totalValue)}</td>
+                      <td style={{ padding: '7px 10px', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>{fmtINR(t.totalCost)}</td>
+                      <td style={{ padding: '7px 10px', color: 'var(--text-muted)', fontSize: 11 }}>
+                        {new Date(t.executedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' })}
+                      </td>
+                      <td style={{ padding: '7px 10px', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)' }}>
+                        {t.blockIndex ? `#${t.blockIndex}` : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+              No recent trades for {selectedSymbol}. Click BUY / SELL to place an order.
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Universal Order Ticket Modal */}
+      <OrderTicket
+        isOpen={ticketOpen}
+        onClose={() => setTicketOpen(false)}
+        onTrade={onTrade}
+        initialSymbol={selectedSymbol}
+        initialSide={ticketSide}
+        initialSegment={ticketSegment}
+        initialPrice={ticketInitPrice}
+        quotes={quotes}
+        holdings={holdings}
+        balance={balance}
+      />
     </div>
   );
 }

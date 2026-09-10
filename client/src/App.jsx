@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
+import { io } from 'socket.io-client';
 
 // Pages / Auth
 import AuthPage          from './pages/AuthPage';
@@ -17,6 +18,10 @@ import WatchlistPage     from './components/Watchlist/WatchlistPage';
 import OrdersPage        from './components/Orders/OrdersPage';
 import NewsPage          from './components/News/NewsPage';
 import OptionChainPage   from './components/OptionChain/OptionChainPage';
+import ScreenerPage      from './components/Screener/ScreenerPage';
+import JournalPage       from './components/Journal/JournalPage';
+import TerminalPage      from './components/Terminal/TerminalPage';
+import RiskAdvisorPage   from './components/RiskAdvisor/RiskAdvisorPage';
 
 // Full-screen chart
 import ChartPage         from './components/Chart/ChartPage';
@@ -24,7 +29,7 @@ import ErrorBoundary     from './components/ErrorBoundary';
 
 // Services & utils
 import api               from './services/api';
-import { getMarketStatus, getBalanceWarning, checkPositionLimit, getAssetRisk } from './utils/sebi';
+import { getMarketStatus, getBalanceWarning } from './utils/sebi';
 
 // ── Initial state helpers ─────────────────────────────────────────────────────
 const LOAD = (k, def) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : def; } catch { return def; } };
@@ -32,7 +37,6 @@ const SAVE = (k, v)   => { try { localStorage.setItem(k, JSON.stringify(v)); } c
 
 const WATCHED_DEFAULT = ['RELIANCE','TCS','HDFCBANK','INFY','ICICIBANK','SBIN','WIPRO','BAJFINANCE'];
 const INDICES = ['^NSEI','^BSESN','^NSEBANK','^CNXIT','^NSEMDCP50'];
-const isOptionSymbol = (s) => /\b(CE|PE)\b/.test(String(s || ''));
 
 export default function App() {
   // ── Auth state ──────────────────────────────────────────────────────────────
@@ -43,6 +47,7 @@ export default function App() {
 
   // ── Market state ─────────────────────────────────────────────────────────────
   const [quotes, setQuotes]     = useState({});
+  const [marketDepth, setMarketDepth] = useState({});
   const [marketLoading, setMarketLoading] = useState(true);
   const [marketStatus, setMarketStatus] = useState(getMarketStatus());
 
@@ -84,26 +89,66 @@ export default function App() {
     return () => clearInterval(iv);
   }, []);
 
-  // ── Market data polling ───────────────────────────────────────────────────────
+  // ── Market data WebSockets + OMS Fill Notifications ───────────────────
+  const socketRef = useRef(null);
+
   useEffect(() => {
     if (!user || !subStatus?.active) return;
 
-    const allSymbols = [...INDICES, ...watchlist].join(',');
+    const socket = io('http://localhost:5000', { withCredentials: true });
+    socketRef.current = socket;
 
-    const fetchQuotes = async () => {
-      try {
-        const data = await api.getQuotes(allSymbols);
-        const map = {};
-        data.forEach(q => { map[q.symbol] = q; });
-        setQuotes(map);
-      } catch {}
-      finally { setMarketLoading(false); }
-    };
+    socket.on('connect', () => {
+      setMarketLoading(false);
+      // Subscribe to market data rooms
+      const allSymbols = [...INDICES, ...watchlist];
+      socket.emit('subscribe:quotes', allSymbols);
+      // Join user-private room with JWT for secure auth (v2 security fix)
+      const jwtToken = localStorage.getItem('bt_token');
+      if (jwtToken) socket.emit('auth:join', jwtToken);
+    });
 
-    fetchQuotes();
-    const iv = setInterval(fetchQuotes, 8000);
-    return () => clearInterval(iv);
-  }, [user, subStatus, watchlist]);
+    // Market data push — tradingSymbol is the canonical key
+    socket.on('quotes:update', (quote) => {
+      const key = quote.tradingSymbol || quote.symbol;
+      if (key) setQuotes(prev => ({ ...prev, [key]: quote }));
+    });
+
+    // Market depth (L2) update
+    socket.on('depth:update', ({ symbol, depth }) => {
+      if (symbol) setMarketDepth(prev => ({ ...prev, [symbol]: depth }));
+    });
+
+    // OMS push: order filled — re-sync authoritative state from server
+    socket.on('order:filled', (fill) => {
+      const costStr = fill.costs?.totalCost ? ` (charges: ₹${fill.costs.totalCost})` : '';
+      showToast(`✅ ${fill.side.toUpperCase()} ${fill.quantity} × ${fill.symbol} @ ₹${Number(fill.price).toLocaleString('en-IN')} — Block #${fill.blockIndex}${costStr}`);
+      api.getSubStatus().then(status => {
+        if (Number.isFinite(Number(status.balance))) setBalance(Number(status.balance));
+        if (status.holdings) setHoldings(status.holdings);
+        if (status.trades)   setTrades(status.trades);
+        setSubStatus(status);
+      }).catch(() => {});
+    });
+
+    // Alert fired
+    socket.on('alert:fired', (alert) => {
+      showToast(`🔔 Alert: ${alert.message}`, 'info');
+    });
+
+    // Heartbeat pong
+    socket.on('server:ping', () => socket.emit('client:pong'));
+
+    return () => { socket.disconnect(); };
+  }, [user, subStatus?.active]);
+
+  // Update subscription when watchlist changes
+  useEffect(() => {
+    if (socketRef.current && socketRef.current.connected) {
+      const allSymbols = [...INDICES, ...watchlist];
+      socketRef.current.emit('subscribe:quotes', allSymbols);
+    }
+  }, [watchlist]);
 
   // ── Persist to localStorage ───────────────────────────────────────────────────
   useEffect(() => { SAVE('bt_user', user); }, [user]);
@@ -127,88 +172,24 @@ export default function App() {
     showToast(`🎉 ${sub.planName} activated! ₹${sub.virtualBalance.toLocaleString('en-IN')} virtual capital ready.`);
   };
 
-  const executeTrade = async ({ type, symbol, quantity, price, orderType }) => {
-    // SEBI: check trade is allowed
-    const risk = getAssetRisk(symbol);
-    if (type === 'buy') {
-      const tradeVal = price * quantity;
-      const holdingVal = (holdings[symbol]?.quantity || 0) * price;
-      const limitCheck = checkPositionLimit(symbol, tradeVal, holdingVal, balance);
-      if (!limitCheck.allowed) throw new Error(limitCheck.reason);
-      if (tradeVal > balance) throw new Error(`Insufficient balance. Need ₹${tradeVal.toLocaleString('en-IN')}`);
-    }
-    if (type === 'sell') {
-      const held = holdings[symbol]?.quantity || 0;
-      // Allow option shorting; disallow stock shorting in this simulator
-      if (!isOptionSymbol(symbol) && held < quantity) throw new Error(`Insufficient shares. Holding: ${held}`);
+  const executeTrade = async ({ type, symbol, quantity, price, orderType = 'market', productType = 'DELIVERY' }) => {
+    // Generate idempotency key to prevent duplicate orders on retry
+    const idempotencyKey = `${user.id}-${symbol}-${type}-${quantity}-${price}-${Date.now()}`;
+    const result = await api.executeTrade({ type, symbol, quantity, price, orderType, productType, idempotencyKey });
+
+    if (!result.success && result.violations) {
+      throw new Error(result.violations[0]?.message || 'Order rejected by risk engine');
     }
 
-    // Execute via API (Local Blockchain)
-    const result = await api.executeTrade({ type, symbol, quantity, price, orderType });
-
-    // Dual-Chain Execution: Record on Ethereum/Sepolia via MetaMask
+    // Dual-Chain Execution: Record on Ethereum/Sepolia via MetaMask (optional)
     try {
-        const { recordTradeOnChain } = await import('./services/web3');
-        const ethTxHash = await recordTradeOnChain(symbol, quantity, price, type, result.hash);
-        console.log("Recorded on Ethereum. TxHash:", ethTxHash);
+      const { recordTradeOnChain } = await import('./services/web3');
+      const ethTxHash = await recordTradeOnChain(symbol, quantity, price, type, result?.trade?.blockHash);
+      console.log('Recorded on Ethereum. TxHash:', ethTxHash);
     } catch (err) {
-        console.warn("MetaMask trade sync failed or skipped:", err.message);
+      console.warn('MetaMask trade sync failed or skipped:', err.message);
     }
 
-    // Update local state
-    setBalance(prev => type === 'buy' ? prev - price * quantity : prev + price * quantity);
-    setHoldings(prev => {
-      const cur = prev[symbol] || { quantity: 0, avgPrice: 0 };
-
-      const qty = Number(quantity);
-      const px = Number(price);
-      if (!qty || !px) return prev;
-
-      // Signed position model:
-      // - Long: quantity > 0
-      // - Short: quantity < 0 (allowed for options; stocks prevented above)
-      if (type === 'buy') {
-        const newQty = cur.quantity + qty;
-
-        // If covering a short, keep avgPrice until fully covered; if flip to long, reset avgPrice to fill price
-        if (cur.quantity < 0) {
-          if (newQty < 0) return { ...prev, [symbol]: { ...cur, quantity: newQty } };
-          if (newQty === 0) { const n = { ...prev }; delete n[symbol]; return n; }
-          return { ...prev, [symbol]: { quantity: newQty, avgPrice: px } };
-        }
-
-        // Adding to long
-        const newAvg = newQty > 0 ? ((cur.quantity * cur.avgPrice) + (qty * px)) / newQty : px;
-        return { ...prev, [symbol]: { quantity: newQty, avgPrice: newAvg } };
-      }
-
-      // sell
-      const newQty = cur.quantity - qty;
-
-      // Reducing a long
-      if (cur.quantity > 0) {
-        if (newQty > 0) return { ...prev, [symbol]: { ...cur, quantity: newQty } };
-        if (newQty === 0) { const n = { ...prev }; delete n[symbol]; return n; }
-        // Flip to short: reset avgPrice to fill price
-        return { ...prev, [symbol]: { quantity: newQty, avgPrice: px } };
-      }
-
-      // Increasing or maintaining a short
-      if (cur.quantity <= 0) {
-        if (newQty === 0) { const n = { ...prev }; delete n[symbol]; return n; }
-        const curAbs = Math.abs(cur.quantity);
-        const newAbs = Math.abs(newQty);
-        const newAvg = ((curAbs * cur.avgPrice) + (qty * px)) / newAbs;
-        return { ...prev, [symbol]: { quantity: newQty, avgPrice: newAvg } };
-      }
-
-      return prev;
-    });
-    setTrades(prev => [result, ...prev]);
-    showToast(`✅ ${type.toUpperCase()} ${quantity} ${symbol} @ ₹${price.toLocaleString('en-IN')} — Block #${result.blockIndex}`);
-
-    // Refresh subscription status for trade count
-    api.getSubStatus().then(setSubStatus).catch(() => {});
     return result;
   };
 
@@ -257,9 +238,13 @@ export default function App() {
     portfolio:  <PortfolioPage holdings={holdings} quotes={quotes} balance={balance} initialBalance={subStatus?.subscription?.initialBalance || balance} onTrade={executeTrade} />,
     blockchain: <BlockchainExplorer trades={trades} />,
     watchlist:  <WatchlistPage watchlist={watchlist} quotes={quotes} onAdd={handleAddWatch} onRemove={handleRemWatch} onTrade={() => setActivePage('trade')} />,
-    orders:     <OrdersPage   trades={trades} />,
+    orders:     <OrdersPage />,
     news:       <NewsPage />,
-    options:    <OptionChainPage symbol="^NSEI" onTrade={executeTrade} balance={balance} />,
+    options:    <OptionChainPage symbol="^NSEI" onTrade={executeTrade} balance={balance} quotes={quotes} holdings={holdings} />,
+    screener:   <ScreenerPage openChart={openChart} executeTrade={executeTrade} />,
+    journal:    <JournalPage showToast={showToast} />,
+    risk:       <RiskAdvisorPage holdings={holdings} quotes={quotes} />,
+    terminal:   <TerminalPage quotes={quotes} marketDepth={marketDepth} onTrade={executeTrade} balance={balance} user={user} />,
   };
 
   return (

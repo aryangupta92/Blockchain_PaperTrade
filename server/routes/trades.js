@@ -1,190 +1,184 @@
-const express = require('express');
-const router = express.Router();
-const blockchain = require('../blockchain');
-const fs = require('fs');
-const path = require('path');
+'use strict';
+/**
+ * routes/trades.js
+ * OMS entry point — all order placement/query/cancellation routes.
+ */
+const express  = require('express');
+const router   = express.Router();
 const authMiddleware = require('../middleware/auth');
+const { PrismaClient } = require('@prisma/client');
+const { placeOrder, cancelOrder } = require('../services/orderService');
+const { getRequiredMargin, parseFOSymbol } = require('../services/marginService');
+const { calculate: calcCosts, quickEstimate } = require('../services/transactionCostEngine');
+const { getInstrumentType, normalizeProductType } = require('../services/riskEngine');
+const prisma = new PrismaClient();
 
-const DB_PATH = path.join(__dirname, '../data/users.json');
-
-function readDB() {
-  try { return JSON.parse(fs.readFileSync(DB_PATH, 'utf8')); }
-  catch { return { users: [] }; }
-}
-function writeDB(data) {
-  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-  fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
-}
-
-const isOptionSymbol = (s) => /\b(CE|PE)\b/.test(String(s || ''));
-
-function updateHoldingsSigned(prevHoldings, symbol, side, qty, px) {
-  const next = { ...(prevHoldings || {}) };
-  const cur = next[symbol] || { quantity: 0, avgPrice: 0 };
-
-  const quantity = Number(qty);
-  const price = Number(px);
-  if (!quantity || !price) return next;
-
-  if (side === 'buy') {
-    const newQty = Number(cur.quantity) + quantity;
-    if (cur.quantity < 0) {
-      if (newQty < 0) { next[symbol] = { ...cur, quantity: newQty }; return next; }
-      if (newQty === 0) { delete next[symbol]; return next; }
-      next[symbol] = { quantity: newQty, avgPrice: price };
-      return next;
-    }
-    const newAvg = newQty > 0 ? ((cur.quantity * cur.avgPrice) + (quantity * price)) / newQty : price;
-    next[symbol] = { quantity: newQty, avgPrice: newAvg };
-    return next;
-  }
-
-  // sell
-  const newQty = Number(cur.quantity) - quantity;
-  if (cur.quantity > 0) {
-    if (newQty > 0) { next[symbol] = { ...cur, quantity: newQty }; return next; }
-    if (newQty === 0) { delete next[symbol]; return next; }
-    next[symbol] = { quantity: newQty, avgPrice: price };
-    return next;
-  }
-
-  if (cur.quantity <= 0) {
-    if (newQty === 0) { delete next[symbol]; return next; }
-    const curAbs = Math.abs(cur.quantity);
-    const newAbs = Math.abs(newQty);
-    const newAvg = ((curAbs * cur.avgPrice) + (quantity * price)) / newAbs;
-    next[symbol] = { quantity: newQty, avgPrice: newAvg };
-    return next;
-  }
-
-  return next;
-}
-
-// In-memory trade store (persists during server lifecycle)
-let trades = [];
-
-// ─── GET /api/trades ──────────────────────────────────────────────────────────
-router.get('/', (req, res) => {
-  res.json({
-    trades,
-    count: trades.length,
-    timestamp: new Date().toISOString(),
-  });
-});
-
-// ─── POST /api/trades ─────────────────────────────────────────────────────────
-// Body: { type, symbol, quantity, price, orderType }
-router.post('/', authMiddleware, (req, res) => {
+// ── POST /api/trades — Place an order ────────────────────────────────────────
+router.post('/', authMiddleware, async (req, res) => {
   try {
-    const { type, symbol, quantity, price, orderType = 'market' } = req.body;
+    const { type, symbol, quantity, price, orderType = 'market', productType = 'CNC', triggerPrice, idempotencyKey, validity = 'DAY' } = req.body;
+    if (!symbol)   return res.status(400).json({ error: 'symbol is required' });
+    if (!type)     return res.status(400).json({ error: 'type (buy|sell) is required' });
+    if (!quantity) return res.status(400).json({ error: 'quantity is required' });
+    if (!price)    return res.status(400).json({ error: 'price is required' });
 
-    if (!type || !symbol || !quantity || !price) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-    if (!['buy', 'sell'].includes(type)) {
-      return res.status(400).json({ error: 'type must be buy or sell' });
-    }
-
-    const qty = Number(quantity);
-    const px = Number(price);
-    if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ error: 'Invalid quantity' });
-    if (!Number.isFinite(px) || px <= 0) return res.status(400).json({ error: 'Invalid price' });
-
-    // ── Load user state from DB ─────────────────────────────────────────────
-    const db = readDB();
-    const idx = db.users.findIndex(u => u.id === req.user.id);
-    if (idx === -1) return res.status(404).json({ error: 'User not found' });
-    const user = db.users[idx];
-    if (!user.subscription || user.subscription.status !== 'active') {
-      return res.status(403).json({ error: 'No active subscription' });
-    }
-
-    // ── Risk checks (paper-broker rules) ────────────────────────────────────
-    const tradeValue = Number((qty * px).toFixed(2));
-    const heldQty = Number(user.holdings?.[symbol]?.quantity || 0);
-
-    if (type === 'buy') {
-      if (user.balance < tradeValue) return res.status(400).json({ error: 'Insufficient balance' });
-    } else {
-      // allow option shorting, block stock shorting
-      if (!isOptionSymbol(symbol) && heldQty < qty) {
-        return res.status(400).json({ error: `Insufficient shares. Holding: ${heldQty}` });
-      }
-    }
-
-    const tradeData = {
-      type,
+    const result = await placeOrder({
+      userId:         req.user.id,
       symbol,
-      quantity: qty,
-      price: px,
+      side:           type,
+      quantity:       Number(quantity),
+      price:          Number(price),
       orderType,
-      totalValue: tradeValue,
-      tradeId: `TRADE-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
-      executedAt: new Date().toISOString(),
-      userId: req.user.id,
-    };
-
-    // Add to blockchain — returns the new Block
-    const block = blockchain.addBlock(tradeData);
-
-    // Store in array
-    const trade = {
-      ...tradeData,
-      blockIndex: block.index,
-      blockHash: block.hash,
-      previousHash: block.previousHash,
-      nonce: block.nonce,
-      minedAt: block.timestamp,
-    };
-    trades.unshift(trade); // newest first
-
-    // ── Persist user portfolio state (fixes cash balance drift) ─────────────
-    user.balance = type === 'buy' ? Number((user.balance - tradeValue).toFixed(2)) : Number((user.balance + tradeValue).toFixed(2));
-    user.holdings = updateHoldingsSigned(user.holdings, symbol, type, qty, px);
-    user.trades = Array.isArray(user.trades) ? [trade, ...user.trades] : [trade];
-    if (user.subscription?.maxTrades > 0) user.subscription.tradesUsed = (user.subscription.tradesUsed || 0) + 1;
-    db.users[idx] = user;
-    writeDB(db);
-
-    res.status(201).json({
-      success: true,
-      trade,
-      block: {
-        index: block.index,
-        hash: block.hash,
-        previousHash: block.previousHash,
-        nonce: block.nonce,
-        timestamp: block.timestamp,
+      productType,
+      triggerPrice:   triggerPrice ? Number(triggerPrice) : null,
+      validity,
+      idempotencyKey: idempotencyKey || null,
+      ctx: {
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
       },
     });
+
+    if (!result.success && result.violations?.length > 0) {
+      return res.status(422).json({
+        success:    false,
+        status:     'REJECTED',
+        violations: result.violations,
+        order:      result.order,
+        costs:      result.costs || null,
+      });
+    }
+
+    return res.status(201).json({
+      success:   true,
+      status:    result.order?.status || 'SUBMITTED',
+      order:     result.order,
+      trade:     result.trade,
+      block:     result.block,
+      costs:     result.costs || null,
+      idempotent: result.idempotent || false,
+    });
   } catch (err) {
-    console.error('Trade execution error:', err.message);
+    console.error('[OMS] Order error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ─── GET /api/trades/blockchain ──────────────────────────────────────────────
-router.get('/blockchain', (req, res) => {
-  const chain = blockchain.chain.map((block) => ({
-    index: block.index,
-    timestamp: block.timestamp,
-    tradeData: block.tradeData,
-    previousHash: block.previousHash,
-    hash: block.hash,
-    nonce: block.nonce,
-  }));
+// ── GET /api/trades/margin — Real-time margin preview (no order placed) ──────
+// Called by the UI on every form change to show margin required BEFORE submit
+router.get('/margin', authMiddleware, async (req, res) => {
+  try {
+    const { symbol, quantity, price, side = 'buy', productType = 'CNC' } = req.query;
+    if (!symbol || !quantity || !price) {
+      return res.status(400).json({ error: 'symbol, quantity, price required' });
+    }
 
-  const stats = blockchain.getStats();
-  const validity = blockchain.isValid();
+    const px  = parseFloat(price);
+    const qty = parseFloat(quantity);
+    const pt  = normalizeProductType(productType);
+    const instrType = getInstrumentType(symbol);
+    const foParsed  = parseFOSymbol(symbol);
 
-  res.json({ chain, stats, validity, timestamp: new Date().toISOString() });
+    const margin = getRequiredMargin({
+      instrumentType: instrType,
+      productType:    pt,
+      side,
+      price:          px,
+      quantity:       qty,
+      lotSize:        foParsed?.lotSize || 1,
+      underlying:     foParsed?.underlying,
+    });
+
+    const costs = quickEstimate(px, qty, side, pt, instrType);
+
+    const user = await prisma.user.findUnique({ where: { id: req.user.id }, select: { balance: true } });
+
+    res.json({
+      margin,
+      costs,
+      available: user?.balance || 0,
+      sufficient: (user?.balance || 0) >= margin.required,
+      instrumentType: instrType,
+      productType: pt,
+      lotSize: foParsed?.lotSize || 1,
+      lots: foParsed ? Math.floor(qty / (foParsed.lotSize || 1)) : null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// ─── GET /api/trades/verify ───────────────────────────────────────────────────
-router.get('/verify', (req, res) => {
-  const result = blockchain.isValid();
-  const stats = blockchain.getStats();
-  res.json({ ...result, stats, timestamp: new Date().toISOString() });
+// ── GET /api/trades — execution history ──────────────────────────────────────
+router.get('/', authMiddleware, async (req, res) => {
+  try {
+    const limit  = Math.min(parseInt(req.query.limit  || '50'), 200);
+    const offset = parseInt(req.query.offset || '0');
+    const [trades, total] = await Promise.all([
+      prisma.trade.findMany({
+        where:   { userId: req.user.id },
+        orderBy: { executedAt: 'desc' },
+        take:    limit,
+        skip:    offset,
+        include: { instrument: { select: { tradingSymbol: true, name: true, exchange: true } } }
+      }),
+      prisma.trade.count({ where: { userId: req.user.id } })
+    ]);
+    res.json({ trades, total, limit, offset });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/trades/orders — order book ──────────────────────────────────────
+router.get('/orders', authMiddleware, async (req, res) => {
+  try {
+    const { status } = req.query;
+    const where = { userId: req.user.id };
+    if (status) where.status = status.toUpperCase();
+
+    const orders = await prisma.order.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take:    100,
+      include: {
+        instrument: { select: { tradingSymbol: true, name: true, exchange: true } },
+        events:     { orderBy: { timestamp: 'asc' } },
+      }
+    });
+    res.json({ orders, count: orders.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── DELETE /api/trades/orders/:id — cancel an order ─────────────────────────
+router.delete('/orders/:id', authMiddleware, async (req, res) => {
+  try {
+    const cancelled = await cancelOrder(req.params.id, req.user.id, {
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    res.json({ success: true, order: cancelled });
+  } catch (err) {
+    const status = err.message.includes('not found') ? 404
+      : err.message === 'Unauthorized' ? 403
+      : err.message.includes('Cannot cancel') ? 409
+      : 500;
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// ── GET /api/trades/blockchain ────────────────────────────────────────────────
+router.get('/blockchain', authMiddleware, async (req, res) => {
+  const blockchain = require('../blockchain');
+  res.json(blockchain.getChain());
+});
+
+// ── GET /api/trades/verify ────────────────────────────────────────────────────
+router.get('/verify', authMiddleware, async (req, res) => {
+  const blockchain = require('../blockchain');
+  const valid = blockchain.isChainValid();
+  res.json({ valid, blocks: blockchain.getChain().length });
 });
 
 module.exports = router;

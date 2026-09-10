@@ -1,102 +1,146 @@
+'use strict';
+
 require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const app = express();
+const express      = require('express');
+const cors         = require('cors');
+const helmet       = require('helmet');
+const pinoHttp     = require('pino-http');
+const pino         = require('pino');
+const { rateLimit } = require('express-rate-limit');
+const http         = require('http');
+
+const app  = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(cors({ origin: 'http://localhost:5173', credentials: true }));
+// ── Security Headers ──────────────────────────────────────────────────────────
+app.use(helmet({
+  contentSecurityPolicy: false, // Managed by frontend
+  crossOriginEmbedderPolicy: false,
+}));
+
+// ── CORS ──────────────────────────────────────────────────────────────────────
+app.use(cors({
+  origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+  credentials: true,
+}));
+
+// ── Body Parser ───────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '2mb' }));
 
+// ── Structured Request Logging (Observability) ────────────────────────────────
+const logger = pino({
+  transport: {
+    target: 'pino-pretty',
+    options: { colorize: true, ignore: 'pid,hostname', translateTime: 'SYS:standard' }
+  }
+});
+app.use(pinoHttp({ logger, autoLogging: { ignore: req => req.url === '/api/system/health' } }));
+
+// ── Global Rate Limiters ──────────────────────────────────────────────────────
+// General API: 200 req/min per IP
+const generalLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please slow down.' },
+});
+
+// Auth endpoints: 10 req/min per IP (brute force protection)
+const authLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many auth attempts. Try again in a minute.' },
+});
+
+// Order placement: 30 orders/min per IP
+const orderLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Order rate limit exceeded. Max 30 orders per minute.' },
+});
+
+app.use('/api', generalLimiter);
+app.use('/api/auth', authLimiter);
+app.use('/api/trades', orderLimiter);
+
 // ── Routes ────────────────────────────────────────────────────────────────────
-const marketRoutes = require('./routes/market');
-const tradesRoutes = require('./routes/trades');
-const authRoutes = require('./routes/auth');
+const marketRoutes       = require('./routes/market');
+const tradesRoutes       = require('./routes/trades');
+const authRoutes         = require('./routes/auth');
 const subscriptionRoutes = require('./routes/subscription');
-const optionsRoutes = require('./routes/options');
+const optionsRoutes      = require('./routes/options');
+const watchlistRoutes    = require('./routes/watchlists');
+const alertRoutes        = require('./routes/alerts');
+const portfolioRoutes    = require('./routes/portfolio');
+const systemRoutes       = require('./routes/system');
+const journalRoutes      = require('./routes/journal');
+const aiRoutes           = require('./routes/ai');
+const screenerRoutes     = require('./routes/screener');
+const traderControlRoutes = require('./routes/traderControl');
 
-app.use('/api/market', marketRoutes);
-app.use('/api/trades', tradesRoutes);
-app.use('/api/auth', authRoutes);
+app.use('/api/market',       marketRoutes);
+app.use('/api/trades',       tradesRoutes);
+app.use('/api/auth',         authRoutes);
 app.use('/api/subscription', subscriptionRoutes);
-app.use('/api/options', optionsRoutes);
+app.use('/api/options',      optionsRoutes);
+app.use('/api/watchlists',   watchlistRoutes);
+app.use('/api/alerts',       alertRoutes);
+app.use('/api/portfolio',    portfolioRoutes);
+app.use('/api/system',       systemRoutes);
+app.use('/api/journal',      journalRoutes);
+app.use('/api/ai',           aiRoutes);
+app.use('/api/screener',     screenerRoutes);
+app.use('/api/trader-control', traderControlRoutes);
 
-// ── Health check ──────────────────────────────────────────────────────────────
-app.get('/api/health', (req, res) => {
-  const blockchain = require('./blockchain');
-  const now = new Date();
-  const istOffset = 5.5 * 60 * 60 * 1000;
-  const ist = new Date(now.getTime() + istOffset);
-  const hours = ist.getUTCHours();
-  const minutes = ist.getUTCMinutes();
-  const day = ist.getUTCDay(); // 0=Sun, 6=Sat
-  const isWeekday = day >= 1 && day <= 5;
-  const marketOpen = isWeekday && (hours > 9 || (hours === 9 && minutes >= 15)) && (hours < 15 || (hours === 15 && minutes <= 30));
+// ── Legacy endpoints (backward compat) ────────────────────────────────────────
+app.get('/api/health', (req, res) => res.redirect('/api/system/health'));
+app.get('/api/sebi/rules', (req, res) => res.redirect('/api/system/sebi'));
 
-  res.json({
-    status: 'ok',
-    serverTime: now.toISOString(),
-    istTime: ist.toISOString(),
-    marketStatus: marketOpen ? 'OPEN' : 'CLOSED',
-    marketMessage: marketOpen
-      ? 'Market is OPEN (9:15 AM – 3:30 PM IST)'
-      : isWeekday
-        ? 'Market is CLOSED. Opens at 9:15 AM IST'
-        : 'Market is CLOSED. Weekend.',
-    blockchain: blockchain.getStats(),
-  });
+// ── 404 Handler ───────────────────────────────────────────────────────────────
+app.use((req, res) => {
+  res.status(404).json({ error: 'Endpoint not found', path: req.path });
 });
 
-// ── SEBI Info endpoint ────────────────────────────────────────────────────────
-app.get('/api/sebi/rules', (req, res) => {
-  res.json({
-    regulator: 'SEBI',
-    website: 'https://www.sebi.gov.in',
-    disclaimer: 'This is a paper trading simulation platform. No real money is involved. All trades are simulated for educational purposes only.',
-    rules: [
-      'Market hours: 9:15 AM to 3:30 PM IST, Monday to Friday',
-      'Pre-market session: 9:00 AM to 9:15 AM IST',
-      'Post-market session: 3:40 PM to 4:00 PM IST',
-      'F&O contracts expire on last Thursday of month',
-      'Equity settlement: T+1 (simulated)',
-      'Risk disclosure must be accepted before trading',
-      'Position limits apply based on subscription tier',
-      'Circuit breakers: ±5%, ±10%, ±20% price bands',
-      'Maximum 90% of portfolio in single stock (simulated)',
-    ],
-    circuitBreakerLevels: [
-      { level: '5%', action: 'Trading halt for 15 minutes' },
-      { level: '10%', action: 'Trading halt for 45 minutes' },
-      { level: '20%', action: 'Trading halt for rest of the day' },
-    ],
-  });
+// ── Global Error Handler ──────────────────────────────────────────────────────
+app.use((err, req, res, _next) => {
+  console.error('[Server Error]', err.message, err.stack);
+  res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 BlockPaperTrade API running on http://localhost:${PORT}`);
-  
-  // Initialize blockchain from persistent storage
+// ── HTTP Server + WebSockets ──────────────────────────────────────────────────
+const server = http.createServer(app);
+const websocketService = require('./services/websocketService');
+websocketService.initialize(server);
+
+server.listen(PORT, async () => {
+  console.log(`\n🚀 BlockPaperTrade Platform v2.0`);
+  console.log(`   API:       http://localhost:${PORT}`);
+  console.log(`   WebSocket: ws://localhost:${PORT}`);
+  console.log(`   DB:        SQLite (Prisma)`);
+
+  // Restore blockchain from DB
   try {
-    const blockchain = require('./blockchain');
-    const fs = require('fs');
-    const path = require('path');
-    const DB_PATH = path.join(__dirname, './data/users.json');
-    if (fs.existsSync(DB_PATH)) {
-      const db = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
-      const allTrades = (db.users || []).reduce((acc, u) => [...acc, ...(u.trades || [])], []);
-      if (allTrades.length > 0) {
-        blockchain.rebuild(allTrades);
-        console.log(`⛓️  Blockchain restored — ${allTrades.length} trades loaded from storage`);
-      } else {
-        console.log(`⛓️  Blockchain initialized — Genesis block mined`);
-      }
+    const blockchain       = require('./blockchain');
+    const { PrismaClient } = require('@prisma/client');
+    const prisma           = new PrismaClient();
+    const allTrades        = await prisma.trade.findMany({ orderBy: { executedAt: 'asc' } });
+    if (allTrades.length > 0) {
+      blockchain.rebuild(allTrades);
+      console.log(`   ⛓️  Blockchain: restored (${allTrades.length} trades)`);
     } else {
-      console.log(`⛓️  Blockchain initialized — Genesis block mined`);
+      console.log(`   ⛓️  Blockchain: genesis block mined`);
     }
   } catch (err) {
-    console.error('Failed to restore blockchain:', err.message);
+    console.error('   ⚠️  Blockchain restore failed:', err.message);
   }
 
-  console.log(`📊 Market data: Yahoo Finance (NSE/BSE)`);
-  console.log(`🔐 Auth & Subscription: Active`);
-  console.log(`📋 SEBI Compliance: Enabled`);
+  console.log(`\n   Rate limiting:  ✓ (200/min general, 10/min auth, 30/min orders)`);
+  console.log(`   Security:       ✓ (Helmet, CORS, JWT)`);
+  console.log(`   Market data:    Dhan (primary) → Yahoo (fallback)`);
+  console.log(`\n   Ready.\n`);
 });

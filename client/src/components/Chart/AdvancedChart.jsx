@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../../services/api';
 import './Chart.css';
-import { Maximize2, Settings2 } from 'lucide-react';
+import { Settings2 } from 'lucide-react';
 
 const RANGES = [
   { label: '1D', value: '1d' },
@@ -28,6 +28,24 @@ const SYMBOL_OPTIONS = [
   { label: 'SBI', value: 'SBIN' },
 ];
 
+// IST offset in seconds: +5:30 = 19800 seconds
+const IST_OFFSET_S = 5.5 * 3600;
+
+/**
+ * Format a Unix timestamp (seconds) as IST time string "HH:MM" or "DD MMM"
+ * depending on whether it is an intraday or daily candle.
+ */
+function fmtTimeIST(unixSec, isIntraday) {
+  const d = new Date((unixSec + IST_OFFSET_S) * 1000);
+  if (isIntraday) {
+    const hh = String(d.getUTCHours()).padStart(2, '0');
+    const mm = String(d.getUTCMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`;
+  }
+  // For daily+: "08 Jun"
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', timeZone: 'UTC' });
+}
+
 // Helper to calculate Simple Moving Average
 function calculateSMA(data, period) {
   const result = [];
@@ -41,7 +59,7 @@ function calculateSMA(data, period) {
   return result;
 }
 
-function CandleChart({ data, currentPrice }) {
+function CandleChart({ data, currentPrice, isIntraday }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const candleSeriesRef = useRef(null);
@@ -61,26 +79,32 @@ function CandleChart({ data, currentPrice }) {
           width: containerRef.current.clientWidth,
           height: containerRef.current.clientHeight || 400,
           layout: { background: { color: 'transparent' }, textColor: '#94a3b8' },
-          grid: { 
-            vertLines: { color: 'rgba(30, 41, 59, 0.4)', style: LineStyle.Dotted }, 
-            horzLines: { color: 'rgba(30, 41, 59, 0.4)', style: LineStyle.Dotted } 
+          grid: {
+            vertLines: { color: 'rgba(30, 41, 59, 0.4)', style: LineStyle.Dotted },
+            horzLines: { color: 'rgba(30, 41, 59, 0.4)', style: LineStyle.Dotted }
           },
-          crosshair: { 
+          crosshair: {
             mode: CrosshairMode.Normal,
             vertLine: { width: 1, color: '#475569', style: LineStyle.Dash, labelBackgroundColor: '#1e293b' },
             horzLine: { width: 1, color: '#475569', style: LineStyle.Dash, labelBackgroundColor: '#1e293b' }
           },
-          rightPriceScale: { 
-            borderColor: '#1e293b', 
+          rightPriceScale: {
+            borderColor: '#1e293b',
             scaleMargins: { top: 0.1, bottom: 0.2 },
             autoScale: true,
             alignLabels: true
           },
-          timeScale: { 
-            borderColor: '#1e293b', 
-            timeVisible: true, 
+          timeScale: {
+            borderColor: '#1e293b',
+            timeVisible: true,
             secondsVisible: false,
-            rightOffset: 5 // Padding on the right for current price line
+            rightOffset: 5,
+            // Format timestamps in IST on the x-axis tick marks
+            tickMarkFormatter: (time) => fmtTimeIST(time, isIntraday),
+          },
+          localization: {
+            // Format crosshair time tooltip in IST
+            timeFormatter: (time) => fmtTimeIST(time, isIntraday),
           },
           handleScroll: { mouseWheel: true, pressedMouseMove: true },
           handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
@@ -96,48 +120,44 @@ function CandleChart({ data, currentPrice }) {
           priceFormat: { type: 'price', precision: 2, minMove: 0.05 }
         });
 
-        // Current Live Price Line mapping
         candleSeries.applyOptions({
-            lastValueVisible: true,
-            priceLineVisible: true,
-            priceLineColor: currentPrice >= (data[data.length-1].open || 0) ? '#10b981' : '#f43f5e',
-            priceLineWidth: 1,
-            priceLineStyle: LineStyle.SparseDotted,
+          lastValueVisible: true,
+          priceLineVisible: true,
+          priceLineColor: currentPrice >= (data[data.length - 1].open || 0) ? '#10b981' : '#f43f5e',
+          priceLineWidth: 1,
+          priceLineStyle: LineStyle.SparseDotted,
         });
 
-        // Volume Histogram Series
+        // Volume Histogram
         const volumeSeries = chart.addHistogramSeries({
           priceFormat: { type: 'volume' },
           priceScaleId: 'volume',
         });
-
         chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
 
-        // Indicator: SMA 20
+        // SMA 20 indicator
         const smaSeries = chart.addLineSeries({
-            color: '#3b82f6', // Blueprint blue
-            lineWidth: 1.5,
-            lineStyle: LineStyle.Solid,
-            title: 'SMA 20',
-            lastValueVisible: false,
-            priceLineVisible: false,
-            crosshairMarkerVisible: true,
-            crosshairMarkerRadius: 3
+          color: '#3b82f6',
+          lineWidth: 1.5,
+          lineStyle: LineStyle.Solid,
+          title: 'SMA 20',
+          lastValueVisible: false,
+          priceLineVisible: false,
+          crosshairMarkerVisible: true,
+          crosshairMarkerRadius: 3
         });
 
         candleSeries.setData(data);
-        const smaData = calculateSMA(data, 20);
-        smaSeries.setData(smaData);
-
+        smaSeries.setData(calculateSMA(data, 20));
         volumeSeries.setData(data.map(d => ({
           time: d.time,
           value: d.volume,
           color: d.close >= d.open ? 'rgba(16, 185, 129, 0.25)' : 'rgba(244, 63, 94, 0.25)',
         })));
-        
+
         chart.timeScale().fitContent();
 
-        // Custom wheel logic for independent scaling
+        // Wheel handler for independent Y-scale zoom
         const handleWheel = (e) => {
           if (!containerRef.current) return;
           const bounds = containerRef.current.getBoundingClientRect();
@@ -150,17 +170,17 @@ function CandleChart({ data, currentPrice }) {
         };
         containerRef.current.addEventListener('wheel', handleWheel, { passive: false, capture: true });
 
-        // Resize observer
+        // ResizeObserver
         const ro = new ResizeObserver(() => {
           if (containerRef.current && chart) {
-            chart.applyOptions({ 
+            chart.applyOptions({
               width: containerRef.current.clientWidth,
               height: containerRef.current.clientHeight
             });
           }
         });
         ro.observe(containerRef.current);
-        
+
         candleSeriesRef.current = candleSeries;
         smaSeriesRef.current = smaSeries;
         chartRef.current = { chart, ro, handleWheel };
@@ -180,7 +200,7 @@ function CandleChart({ data, currentPrice }) {
         }
         candleSeriesRef.current = null;
         smaSeriesRef.current = null;
-        try { chartRef.current.chart?.remove(); } catch(e){}
+        try { chartRef.current.chart?.remove(); } catch (e) { }
         chartRef.current = null;
       }
     };
@@ -192,17 +212,16 @@ function CandleChart({ data, currentPrice }) {
       const last = data[data.length - 1];
       const newClose = currentPrice;
       const isGain = newClose >= last.open;
-      
+
       candleSeriesRef.current.update({
         ...last,
         close: newClose,
         high: Math.max(last.high, newClose),
         low: Math.min(last.low, newClose)
       });
-      
-      // Flash live line color
+
       candleSeriesRef.current.applyOptions({
-         priceLineColor: isGain ? '#10b981' : '#f43f5e',
+        priceLineColor: isGain ? '#10b981' : '#f43f5e',
       });
     }
   }, [currentPrice, data]);
@@ -210,23 +229,30 @@ function CandleChart({ data, currentPrice }) {
   return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />;
 }
 
-export default function AdvancedChart({ symbol, onRangeChange, onSymbolChange }) {
+/**
+ * AdvancedChart — dashboard inline chart.
+ * Props:
+ *   symbol, onRangeChange, onSymbolChange
+ *   quote  — live quote from parent (has .change, .changePercent, .previousClose)
+ */
+export default function AdvancedChart({ symbol, onRangeChange, onSymbolChange, quote }) {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState([]);
   const [currentRange, setCurrentRange] = useState('1d');
   const [error, setError] = useState('');
   const [livePrice, setLivePrice] = useState(null);
+  const [localQuote, setLocalQuote] = useState(null); // fallback polled quote
 
-  const lastVal = data[data.length - 1];
-  const firstVal = data[0];
+  // True when the active range is intraday (sub-daily intervals)
+  const isIntraday = ['1d', '5d'].includes(currentRange);
 
   useEffect(() => {
     let active = true;
     const r = RANGES.find(x => x.value === currentRange) || RANGES[0];
-    
-    // For 1D specifically, fetch 1minute intervals to make it look professional
+
+    // Intraday: 1-minute candles for best resolution; others: auto
     const customInterval = r.value === '1d' ? '1m' : 'auto';
-    
+
     const load = async () => {
       setLoading(true);
       setError('');
@@ -234,7 +260,7 @@ export default function AdvancedChart({ symbol, onRangeChange, onSymbolChange })
         const res = await api.getCandles(symbol, r.value, customInterval);
         if (!active) return;
         setData(res || []);
-        if (res?.length) setLivePrice(res[res.length-1].close);
+        if (res?.length) setLivePrice(res[res.length - 1].close);
       } catch (e) {
         if (active) { setError(e.message); setData([]); }
       } finally {
@@ -245,15 +271,19 @@ export default function AdvancedChart({ symbol, onRangeChange, onSymbolChange })
     return () => { active = false; };
   }, [symbol, currentRange]);
 
-  // Live polling
+  // Live price polling — also refresh localQuote for indices without a parent quote
   useEffect(() => {
     let interval;
     if (data.length > 0) {
       interval = setInterval(async () => {
         try {
-          const [q] = await api.getQuotes(symbol);
-          if (q?.price) setLivePrice(q.price);
-        } catch(e){}
+          const qs = await api.getQuotes(symbol);
+          const q = Array.isArray(qs) ? qs[0] : qs;
+          if (q?.price) {
+            setLivePrice(q.price);
+            setLocalQuote(q);
+          }
+        } catch (e) { }
       }, 5000);
     }
     return () => clearInterval(interval);
@@ -264,9 +294,33 @@ export default function AdvancedChart({ symbol, onRangeChange, onSymbolChange })
     onRangeChange?.(val);
   };
 
+  // ── Derive price change for the header ─────────────────────────────────────
+  // Priority order:
+  // 1. If viewing 1D: use official server-supplied change (quote prop or localQuote)
+  // 2. If viewing longer ranges: compare current price vs first candle's open
+  const lastVal = data[data.length - 1];
+  const firstVal = data[0];
   const currentDisplayPrice = livePrice || lastVal?.close || 0;
-  const chg = lastVal && firstVal ? currentDisplayPrice - firstVal.open : 0;
-  const chgPct = firstVal?.open ? (chg / firstVal.open) * 100 : 0;
+
+  let chg = 0;
+  let chgPct = 0;
+
+  const activeQuote = quote || localQuote; // prefer parent-supplied live quote
+
+  if (currentRange === '1d' && activeQuote) {
+    // Use the server-computed official daily change (matches hero cards)
+    chg = activeQuote.change ?? 0;
+    chgPct = activeQuote.changePercent ?? 0;
+  } else if (data.meta?.previousClose && currentRange === '1d') {
+    // Fallback: derive from meta.previousClose
+    chg = currentDisplayPrice - data.meta.previousClose;
+    chgPct = data.meta.previousClose ? (chg / data.meta.previousClose) * 100 : 0;
+  } else if (lastVal && firstVal) {
+    // Multi-day ranges: show gain/loss vs first candle open in the dataset
+    chg = currentDisplayPrice - firstVal.open;
+    chgPct = firstVal.open ? (chg / firstVal.open) * 100 : 0;
+  }
+
   const isGain = chg >= 0;
 
   return (
@@ -292,8 +346,8 @@ export default function AdvancedChart({ symbol, onRangeChange, onSymbolChange })
               {r.label}
             </button>
           ))}
-          <button className="chart-range-btn" title="Chart Settings" style={{marginLeft: 4}}>
-              <Settings2 size={13} style={{opacity: 0.7}}/>
+          <button className="chart-range-btn" title="Chart Settings" style={{ marginLeft: 4 }}>
+            <Settings2 size={13} style={{ opacity: 0.7 }} />
           </button>
         </div>
       </div>
@@ -305,16 +359,16 @@ export default function AdvancedChart({ symbol, onRangeChange, onSymbolChange })
       ) : (
         <div style={{ flex: 1, minHeight: 400, position: 'relative' }}>
           {data.length > 0 ? (
-            <CandleChart key={`${symbol}-${currentRange}`} data={data} currentPrice={livePrice} />
+            <CandleChart key={`${symbol}-${currentRange}`} data={data} currentPrice={livePrice} isIntraday={isIntraday} />
           ) : !loading ? (
             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
               No chart data available for this market timeframe.
             </div>
           ) : null}
-          
+
           {loading && data.length === 0 && (
             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <div className="spinner" style={{width: 30, height: 30, borderWidth: 3}} />
+              <div className="spinner" style={{ width: 30, height: 30, borderWidth: 3 }} />
             </div>
           )}
         </div>
@@ -322,4 +376,3 @@ export default function AdvancedChart({ symbol, onRangeChange, onSymbolChange })
     </div>
   );
 }
-
