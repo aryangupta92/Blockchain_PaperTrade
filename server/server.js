@@ -82,6 +82,7 @@ const journalRoutes      = require('./routes/journal');
 const aiRoutes           = require('./routes/ai');
 const screenerRoutes     = require('./routes/screener');
 const traderControlRoutes = require('./routes/traderControl');
+const backtestRoutes      = require('./routes/backtest');
 
 app.use('/api/market',       marketRoutes);
 app.use('/api/trades',       tradesRoutes);
@@ -96,6 +97,7 @@ app.use('/api/journal',      journalRoutes);
 app.use('/api/ai',           aiRoutes);
 app.use('/api/screener',     screenerRoutes);
 app.use('/api/trader-control', traderControlRoutes);
+app.use('/api/backtest',      backtestRoutes);
 
 // ── Legacy endpoints (backward compat) ────────────────────────────────────────
 app.get('/api/health', (req, res) => res.redirect('/api/system/health'));

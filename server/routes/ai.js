@@ -158,15 +158,21 @@ router.post('/bias-coach', authMiddleware, async (req, res) => {
       rrActual: j.riskRewardActual
     }));
 
-    const prompt = `You are a Trading Psychology Expert.
-Analyze the trader's last ${journals.length} journal entries to identify behavioral patterns and cognitive biases (e.g., FOMO, revenge trading, cutting winners early).
+    const prompt = `You are a Trading Psychology Expert specializing in Indian retail traders.
+Analyze the trader's last ${journals.length} journal entries to identify behavioral patterns and cognitive biases (e.g., FOMO, revenge trading, cutting winners early, averaging down losers, over-leveraging in F&O).
+
 Journal Data: ${JSON.stringify(journalData)}
+
+Also assign the trader a "Trader Persona" — a named psychological archetype that best describes their overall trading style and psychology. Choose from (or create a fitting one):
+"Momentum Chaser", "Revenge Trader", "Disciplined Executor", "FOMO Trader", "Risk-Averse Hesitator", "Overconfident Scalper", "Loss Aversion Holder", "Systematic Planner", "Emotional Swinger", "Calculated Risk-Taker".
 
 Return the response STRICTLY as a JSON object with the following schema:
 {
+  "persona": "Name of trader persona",
+  "personaDescription": "One sentence describing this persona and its typical failure mode or strength",
   "biases": ["List of identified biases"],
   "strengths": ["List of identified strengths"],
-  "recommendations": ["Actionable steps to fix biases"]
+  "recommendations": ["Actionable steps to fix biases and improve performance"]
 }`;
 
     const model = getModel();
@@ -180,8 +186,9 @@ Return the response STRICTLY as a JSON object with the following schema:
       const parsed = JSON.parse(text);
       res.json({ report: parsed });
     } catch (parseErr) {
-      res.json({ report: { biases: [], strengths: [], recommendations: ["Error parsing AI response. Raw output: " + text] } });
+      res.json({ report: { persona: 'Unknown', personaDescription: '', biases: [], strengths: [], recommendations: ['Error parsing AI response. Raw output: ' + text] } });
     }
+
   } catch (err) {
     if (err.message.includes('not configured')) {
        return res.json({ report: { biases: [], strengths: [], recommendations: ["AI Coach is offline (missing GEMINI_API_KEY)"] } });
@@ -190,4 +197,61 @@ Return the response STRICTLY as a JSON object with the following schema:
   }
 });
 
+// POST /api/ai/validate-strategy
+// Module 3: AI-Assisted Strategy Validator
+router.post('/validate-strategy', authMiddleware, async (req, res) => {
+  try {
+    const {
+      strategyName, entryCondition, exitCondition, stopLoss, target,
+      capital, instrument, timeframe, backtestResults
+    } = req.body;
+
+    if (!strategyName || !entryCondition || !exitCondition) {
+      return res.status(400).json({ error: 'strategyName, entryCondition, and exitCondition are required.' });
+    }
+
+    const prompt = `You are an expert Indian Stock Market Strategy Analyst and Quant Researcher.
+A retail trader has backtested the following strategy on Indian markets. Your job is to provide a rigorous, institutional-grade validation report.
+
+**Strategy Details:**
+- Name: ${strategyName}
+- Instrument: ${instrument || 'Not specified'}
+- Timeframe: ${timeframe || 'Not specified'}
+- Entry Condition: ${entryCondition}
+- Exit Condition: ${exitCondition}
+- Stop Loss: ${stopLoss || 'Not specified'}
+- Target: ${target || 'Not specified'}
+- Capital: ₹${capital?.toLocaleString('en-IN') || 'Not specified'}
+
+**Backtest Results (if provided):**
+${backtestResults ? JSON.stringify(backtestResults, null, 2) : 'No backtest results provided; validate the strategy logic theoretically.'}
+
+**Your Validation Must Include:**
+1. **Strategy Summary** - A brief plain-English explanation of what this strategy does.
+2. **Edge Assessment** - Does this strategy have a statistically valid edge? Why or why not?
+3. **Indian Market Reality Check** - Critically analyze the strategy against:
+   - STT (Securities Transaction Tax) impact on profitability
+   - Exchange transaction charges & stamp duty erosion
+   - Slippage in Indian markets (especially mid-cap/small-cap liquidity gaps)
+   - Impact cost during high-volatility events (Union Budget, RBI policy)
+   - F&O expiry anomalies if applicable
+4. **Overfitting Red Flags** - Is this strategy curve-fitted to historical Nifty/Sensex data? Identify any warning signs.
+5. **Risk-Reward Reality** - Evaluate actual vs. claimed risk-reward after costs.
+6. **Verdict** - A clear PASS / CONDITIONAL PASS / FAIL verdict with confidence level.
+7. **Improvement Suggestions** - 3 concrete, actionable improvements.
+
+Format the entire response in professional Markdown. Be direct, rigorous, and avoid sugarcoating weak strategies.`;
+
+    const model = getModel();
+    const result = await model.generateContent(prompt);
+    res.json({ validationReport: result.response.text() });
+  } catch (err) {
+    if (err.message.includes('not configured')) {
+      return res.json({ validationReport: '_AI Strategy Validator is offline. Please configure GEMINI_API_KEY._' });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
+

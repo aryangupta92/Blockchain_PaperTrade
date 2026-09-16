@@ -347,20 +347,21 @@ export default function OrderTicket({
             <div className="ot-tabs">
               {segment === 'EQ' ? (
                 <>
-                  <button className={`ot-tab ${productType === 'CNC' ? 'active' : ''}`} onClick={() => setProductType('CNC')} title="Delivery — hold multiple days">CNC</button>
-                  <button className={`ot-tab ${productType === 'MIS' ? 'active' : ''}`} onClick={() => setProductType('MIS')} title="Intraday — auto SQ-OFF at 3:15 PM">MIS</button>
+                  <button className={`ot-tab ${productType === 'CNC' ? 'active' : ''}`} onClick={() => setProductType('CNC')} title="Delivery — hold multiple days">Delivery (CNC)</button>
+                  <button className={`ot-tab ${productType === 'MIS' ? 'active' : ''}`} onClick={() => setProductType('MIS')} title="Intraday — auto SQ-OFF at 3:15 PM">Intraday (MIS)</button>
                 </>
               ) : (
                 <>
-                  <button className={`ot-tab ${productType === 'NRML' ? 'active' : ''}`} onClick={() => setProductType('NRML')} title="Overnight F&O carry">NRML</button>
-                  <button className={`ot-tab ${productType === 'MIS' ? 'active' : ''}`} onClick={() => setProductType('MIS')} title="Intraday — reduced margin, SQ-OFF at 3:15">MIS</button>
+                  <button className={`ot-tab ${productType === 'NRML' ? 'active' : ''}`} onClick={() => setProductType('NRML')} title="Overnight F&O carry">Normal (NRML)</button>
+                  <button className={`ot-tab ${productType === 'MIS' ? 'active' : ''}`} onClick={() => setProductType('MIS')} title="Intraday — reduced margin, SQ-OFF at 3:15">Intraday (MIS)</button>
                 </>
               )}
             </div>
             <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
               {productType === 'CNC' && 'Equity delivery — hold for multiple days. No leverage.'}
-              {productType === 'MIS' && 'Intraday — 5x leverage. Auto square-off at 3:15 PM IST.'}
-              {productType === 'NRML' && 'F&O overnight carry — SPAN + Exposure margin required.'}
+              {productType === 'MIS' && segment === 'EQ' && 'Intraday Equity — 5x leverage. Auto square-off at 3:15 PM IST.'}
+              {productType === 'MIS' && segment === 'FO' && 'Intraday F&O — reduced margin. Auto square-off at 3:15 PM IST.'}
+              {productType === 'NRML' && 'F&O overnight carry (Options & Futures) — SPAN + Exposure margin required.'}
             </div>
           </div>
 

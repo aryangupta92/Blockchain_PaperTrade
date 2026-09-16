@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../services/api';
-import { Target, BarChart2, Zap, Brain, TrendingUp, TrendingDown, RefreshCw } from 'lucide-react';
+import { Target, BarChart2, Zap, Brain, TrendingUp, TrendingDown, RefreshCw, User, Link } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 export default function JournalPage({ showToast }) {
@@ -23,8 +23,12 @@ export default function JournalPage({ showToast }) {
   const [biasReport, setBiasReport] = useState(null);
   const [biasLoading, setBiasLoading] = useState(false);
 
+  // Recent trades for journal linker
+  const [recentTrades, setRecentTrades] = useState([]);
+
   useEffect(() => {
     fetchEntries();
+    api.getTrades(20, 0).then(d => setRecentTrades(d.trades || [])).catch(() => {});
   }, []);
 
   const fetchEntries = async () => {
@@ -67,6 +71,10 @@ export default function JournalPage({ showToast }) {
   };
 
   const getBiasCoachReport = async () => {
+    if (entries.length < 3) {
+      showToast('Add at least 3 journal entries before running Bias Coach analysis.', 'error');
+      return;
+    }
     setBiasLoading(true);
     try {
       const res = await api.getAIBiasCoach();
@@ -116,6 +124,21 @@ export default function JournalPage({ showToast }) {
           <h3 style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--accent-primary)', marginBottom: 16 }}>
             <Brain size={20} /> AI Behavioral Pattern Analysis
           </h3>
+
+          {/* Trader Persona Card */}
+          {biasReport.persona && (
+            <div style={{ background: 'linear-gradient(135deg, rgba(99,102,241,0.15), rgba(139,92,246,0.1))', border: '1px solid rgba(99,102,241,0.3)', borderRadius: 12, padding: '16px 20px', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 16 }}>
+              <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <User size={24} color="#fff" />
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 2 }}>Your Trader Persona</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--accent-primary)', marginBottom: 4 }}>🎭 {biasReport.persona}</div>
+                <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{biasReport.personaDescription}</div>
+              </div>
+            </div>
+          )}
+
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20 }}>
             <div>
               <h4 style={{ color: 'var(--loss)', marginBottom: 8 }}>⚠️ Identified Biases</h4>
@@ -220,6 +243,23 @@ export default function JournalPage({ showToast }) {
                 <label style={{ display: 'block', marginBottom: 6, fontSize: 12, color: 'var(--text-muted)' }}>Title</label>
                 <input className="input-field" style={{ width: '100%' }} value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} placeholder="e.g., Nifty Breakout Trade" />
               </div>
+
+              {/* Trade Linker */}
+              {recentTrades.length > 0 && (
+                <div>
+                  <label style={{ display: 'block', marginBottom: 6, fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <Link size={11} /> Link to a Trade (optional)
+                  </label>
+                  <select className="input-field" style={{ width: '100%' }} value={formData.tradeId || ''} onChange={e => setFormData({...formData, tradeId: e.target.value || null})}>
+                    <option value="">— No trade linked —</option>
+                    {recentTrades.map(t => (
+                      <option key={t.id} value={t.id}>
+                        {t.side?.toUpperCase()} {t.quantity} × {t.instrument?.tradingSymbol || 'Unknown'} @ ₹{Number(t.price).toLocaleString('en-IN')} ({new Date(t.executedAt).toLocaleDateString('en-IN')})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
                 <div>

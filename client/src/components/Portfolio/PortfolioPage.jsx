@@ -1,6 +1,8 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import './Portfolio.css';
-import { TrendingUp, TrendingDown, Wallet, BarChart2, Activity, Target, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { TrendingUp, TrendingDown, Wallet, BarChart2, Activity, Target, ArrowUpRight, ArrowDownRight, Zap, X } from 'lucide-react';
+import api from '../../services/api';
+import ReactMarkdown from 'react-markdown';
 
 function fmtPrice(n) {
   if (n === undefined || n === null) return '0.00';
@@ -115,8 +117,47 @@ export default function PortfolioPage({ holdings, quotes, balance, initialBalanc
     return { symbol, value, color: POSITION_COLORS[i % POSITION_COLORS.length] };
   });
 
+  const [aiInsight, setAiInsight] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [showAiModal, setShowAiModal] = useState(false);
+
+  const fetchAiInsight = async () => {
+    setShowAiModal(true);
+    setAiLoading(true);
+    try {
+      const res = await api.getAIPortfolioRisk(); // Reusing the same endpoint, it's robust
+      setAiInsight(res.report);
+    } catch (e) {
+      setAiInsight('Failed to fetch AI insights. Please check API keys.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   return (
     <div className="portfolio-page">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <h2 style={{ fontSize: 20, fontWeight: 800 }}>My Portfolio</h2>
+        <button className="btn-gain" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', borderRadius: 8, fontSize: 13 }} onClick={fetchAiInsight}>
+          <Zap size={14} /> AI Insights
+        </button>
+      </div>
+
+      {showAiModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div className="card" style={{ width: '90%', maxWidth: 600, maxHeight: '80vh', overflowY: 'auto', position: 'relative' }}>
+            <button onClick={() => setShowAiModal(false)} style={{ position: 'absolute', top: 16, right: 16, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={20}/></button>
+            <h3 style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--accent-primary)', marginBottom: 16 }}><Zap size={18}/> AI Portfolio Insights</h3>
+            {aiLoading ? (
+              <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>Analyzing portfolio distribution and generating insights...</div>
+            ) : (
+              <div style={{ fontSize: 13, lineHeight: 1.6, color: 'var(--text-primary)' }}>
+                <ReactMarkdown>{aiInsight}</ReactMarkdown>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── KPI Summary Row ─────────────────────────────────────────────────── */}
       <div className="portfolio-kpi-row">
@@ -244,7 +285,11 @@ export default function PortfolioPage({ holdings, quotes, balance, initialBalanc
                             <div style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
                             <div>
                               <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 13 }}>{symbol}</div>
-                              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{/\b(CE|PE)\b/.test(symbol) ? 'OPTION' : 'NSE EQ'}</div>
+                              <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+                                {h.type === 'OPTION' && <span style={{ fontSize: 9, padding: '2px 6px', background: 'rgba(99,102,241,0.15)', color: '#6366f1', borderRadius: 4, fontWeight: 700 }}>OPTION</span>}
+                                {h.type === 'FUTURE' && <span style={{ fontSize: 9, padding: '2px 6px', background: 'rgba(245,158,11,0.15)', color: '#f59e0b', borderRadius: 4, fontWeight: 700 }}>FUTURE</span>}
+                                {h.type === 'EQUITY' && <span style={{ fontSize: 9, padding: '2px 6px', background: 'rgba(16,185,129,0.15)', color: '#10b981', borderRadius: 4, fontWeight: 700 }}>EQUITY</span>}
+                              </div>
                             </div>
                           </div>
                         </td>

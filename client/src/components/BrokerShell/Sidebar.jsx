@@ -1,5 +1,6 @@
 import { TrendingUp, BarChart2, Briefcase, Link, Eye, ClipboardList,
-         Newspaper, Target, LogOut, HelpCircle, Settings, User, Zap, ShieldAlert } from 'lucide-react';
+         Newspaper, Target, LogOut, HelpCircle, Settings, User, Zap, ShieldAlert, FlaskConical } from 'lucide-react';
+
 
 const NAV = [
   { section: 'MARKET', items: [
@@ -12,7 +13,8 @@ const NAV = [
     { id: 'risk',      icon: ShieldAlert,   label: 'Risk Advisor',  badge: 'AI' },
     { id: 'orders',    icon: ClipboardList, label: 'Orders',        badge: null },
     { id: 'watchlist', icon: Eye,           label: 'Watchlist',     badge: null },
-    { id: 'journal',   icon: BarChart2,     label: 'Trade Journal', badge: 'AI' },
+    { id: 'journal',   icon: BarChart2,      label: 'Trade Journal', badge: 'AI' },
+    { id: 'backtest',  icon: FlaskConical,   label: 'Backtester',    badge: 'AI' },
   ]},
   { section: 'TRADING', items: [
     { id: 'terminal', icon: Zap,           label: 'Pro Terminal',  badge: 'LIVE' },

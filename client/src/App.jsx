@@ -22,6 +22,7 @@ import ScreenerPage      from './components/Screener/ScreenerPage';
 import JournalPage       from './components/Journal/JournalPage';
 import TerminalPage      from './components/Terminal/TerminalPage';
 import RiskAdvisorPage   from './components/RiskAdvisor/RiskAdvisorPage';
+import BacktestPage      from './components/Backtest/BacktestPage';
 
 // Full-screen chart
 import ChartPage         from './components/Chart/ChartPage';
@@ -244,6 +245,7 @@ export default function App() {
     screener:   <ScreenerPage openChart={openChart} executeTrade={executeTrade} />,
     journal:    <JournalPage showToast={showToast} />,
     risk:       <RiskAdvisorPage holdings={holdings} quotes={quotes} />,
+    backtest:   <BacktestPage showToast={showToast} />,
     terminal:   <TerminalPage quotes={quotes} marketDepth={marketDepth} onTrade={executeTrade} balance={balance} user={user} />,
   };
 
