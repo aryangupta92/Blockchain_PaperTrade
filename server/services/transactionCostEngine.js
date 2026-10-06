@@ -5,15 +5,16 @@
  *
  * Covers:
  *  - Flat ₹20 brokerage (Zerodha/Dhan-style discount broker model)
- *  - STT (Securities Transaction Tax) — SEBI 2024 revised rates
- *  - Exchange transaction charges (NSE/BSE)
- *  - GST on (brokerage + exchange charges + SEBI fee)
- *  - SEBI charges
- *  - Stamp duty (buyer only, union rates post-2020)
+ *  - STT — Finance Act 2026 rates w.e.f. 01-Apr-2026 (BSE Notice 20260331-7):
+ *      equity delivery 0.1% both sides · intraday 0.025% sell only ·
+ *      futures sell 0.05% · options sell 0.15% of PREMIUM (buyer pays NO STT
+ *      except 0.15% on exercise) · options STT on premium turnover, not notional
+ *  - Exchange transaction charges at actuals (NSE/BSE)
+ *  - GST 18% on (brokerage + exchange + SEBI)
+ *  - SEBI fee ₹10 per crore
+ *  - Stamp duty (buyer only)
+ *  - CDSL DP charge ₹15.34 per scrip on CNC sell (delivery debit)
  *  - Break-even price calculation
- *
- * Key fix v2: Options STT is computed on PREMIUM turnover, not notional value.
- * Futures STT is on the SELL side only at 0.02% of turnover.
  */
 
 'use strict';
@@ -24,12 +25,14 @@ const RATES = {
   BROKERAGE_MAX_PCT: 0.0025,    // 0.25% cap (whichever is lower applies)
 
   STT: {
-    EQUITY_DELIVERY:  0.001,    // 0.1% on both buy & sell
+    EQUITY_DELIVERY:  0.001,    // 0.1% on both buy & sell (STT Act)
     EQUITY_INTRADAY:  0.00025,  // 0.025% on sell side only
-    FUTURES_SELL:     0.0002,   // 0.02% on sell side (on futures turnover)
-    OPTIONS_BUY:      0.001,    // 0.1% on premium on buy side
-    OPTIONS_SELL:     0.001,    // 0.1% on premium on sell side
+    FUTURES_SELL:     0.0005,   // 0.05% on sell side — Finance Act 2026
+    OPTIONS_BUY:      0,        // NO STT on option buy (only 0.15% if exercised)
+    OPTIONS_SELL:     0.0015,   // 0.15% of premium on sell — Finance Act 2026
   },
+
+  DP_CHARGE_CNC_SELL: 15.34,    // CDSL DP charge per scrip per day on delivery sell
 
   NSE_CHARGES: {
     EQUITY:   0.0000322,        // ₹3.22 per lakh
@@ -118,8 +121,12 @@ function calculate({ price, quantity, side, productType = 'CNC', instrumentType 
     if (instrumentType === 'OPTIONS')  stampDuty = turnover * RATES.STAMP_DUTY.OPTIONS;
   }
 
+  // ── DP charge: CDSL debit on CNC delivery sell (per scrip, per day) ──────────
+  const dpCharge = (instrumentType === 'EQUITY' && pt === 'CNC' && side === 'sell')
+    ? RATES.DP_CHARGE_CNC_SELL : 0;
+
   // ── Totals ────────────────────────────────────────────────────────────────────
-  const totalCost  = brokerage + stt + exchangeFee + gst + stampDuty + sebiFee;
+  const totalCost  = brokerage + stt + exchangeFee + gst + stampDuty + sebiFee + dpCharge;
   const netAmount  = side === 'buy' ? turnover + totalCost : turnover - totalCost;
 
   // ── Break-even price ──────────────────────────────────────────────────────────
@@ -134,6 +141,7 @@ function calculate({ price, quantity, side, productType = 'CNC', instrumentType 
     sebiFee:        round(sebiFee),
     gst:            round(gst),
     stampDuty:      round(stampDuty),
+    dpCharge:       round(dpCharge),
     totalCost:      round(totalCost),
     netAmount:      round(netAmount),
     breakEvenPrice: round(breakEvenPrice),
@@ -141,12 +149,13 @@ function calculate({ price, quantity, side, productType = 'CNC', instrumentType 
     // Human-readable line items for UI display
     lineItems: [
       { label: 'Turnover',           value: round(turnover) },
-      { label: 'Brokerage',          value: round(brokerage) },
+      { label: 'Brokerage (max ₹20)', value: round(brokerage) },
       { label: 'STT',                value: round(stt) },
-      { label: 'Exchange Charges',   value: round(exchangeFee) },
-      { label: 'SEBI Charges',       value: round(sebiFee) },
+      { label: 'Exchange Charges (at actuals)', value: round(exchangeFee) },
+      { label: 'SEBI Charges (₹10/cr)', value: round(sebiFee) },
       { label: 'GST (18%)',          value: round(gst) },
-      { label: 'Stamp Duty',         value: round(stampDuty) },
+      { label: 'Stamp Duty (buy only)', value: round(stampDuty) },
+      ...(dpCharge ? [{ label: 'DP Charge (CNC sell)', value: round(dpCharge) }] : []),
       { label: 'Total Charges',      value: round(totalCost) },
       { label: 'Net Amount',         value: round(netAmount) },
     ],

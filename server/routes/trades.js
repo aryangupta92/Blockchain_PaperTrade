@@ -7,7 +7,7 @@ const express  = require('express');
 const router   = express.Router();
 const authMiddleware = require('../middleware/auth');
 const { PrismaClient } = require('@prisma/client');
-const { placeOrder, cancelOrder } = require('../services/orderService');
+const { placeOrder, cancelOrder, modifyOrder } = require('../services/orderService');
 const { getRequiredMargin, parseFOSymbol } = require('../services/marginService');
 const { calculate: calcCosts, quickEstimate } = require('../services/transactionCostEngine');
 const { getInstrumentType, normalizeProductType } = require('../services/riskEngine');
@@ -163,6 +163,27 @@ router.delete('/orders/:id', authMiddleware, async (req, res) => {
     const status = err.message.includes('not found') ? 404
       : err.message === 'Unauthorized' ? 403
       : err.message.includes('Cannot cancel') ? 409
+      : 500;
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// ── PUT /api/trades/orders/:id — modify an OPEN/PENDING order (Kite parity) ─
+router.put('/orders/:id', authMiddleware, async (req, res) => {
+  try {
+    const { price, quantity, triggerPrice, validity, disclosedQuantity, orderType } = req.body || {};
+    const updated = await modifyOrder(req.params.id, req.user.id, {
+      price, quantity, triggerPrice, validity, disclosedQuantity, orderType,
+    }, {
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    res.json({ success: true, order: updated });
+  } catch (err) {
+    const status = err.message.includes('not found') ? 404
+      : err.message === 'Unauthorized' ? 403
+      : err.message.includes('Cannot modify') ? 409
+      : err.message.includes('Invalid') || err.message.includes('Nothing') ? 400
       : 500;
     res.status(status).json({ error: err.message });
   }

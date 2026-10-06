@@ -1,135 +1,122 @@
 /**
- * OrderTicket.jsx — Universal Reusable Order Placement Modal
+ * OrderTicket.jsx — Kite-parity docked order window
  * ─────────────────────────────────────────────────────────────────────────────
- * Matches real Indian broker UX (Zerodha/Upstox) with:
- *  - Segment tabs: EQ | F&O
- *  - F&O instrument builder (underlying → expiry → strike → CE/PE)
- *  - Product type: CNC | MIS | NRML
- *  - Order types: MARKET | LIMIT | SL | SL-M | GTT | IOC
- *  - Live real-time margin preview via GET /api/trades/margin
- *  - Cost breakdown (Brokerage, STT, Exchange, GST, Stamp Duty)
- *  - Lot size enforcement for F&O
+ * Zerodha/Upstox/Dhan behaviour:
+ *  - Bottom-docked ticket (not centered modal), BUY = blue, SELL = red
+ *  - Exchange toggle NSE/BSE, Product CNC/MIS/NRML, Validity DAY/IOC
+ *  - Disclosed quantity, trigger price for SL/SL-M, AMO badge when market closed
+ *  - Modify mode for OPEN/PENDING/TRIGGER_PENDING orders (PUT /api/trades/orders/:id)
+ *  - Live margin + full Zerodha-style charges breakdown before submit
  */
-
 import { useState, useEffect, useCallback, useRef } from 'react';
+import '../Broker/Kite.css';
 import './OrderTicket.css';
-import { X, TrendingUp, TrendingDown, AlertCircle, CheckCircle, Info, ChevronDown, ChevronUp, Zap } from 'lucide-react';
+import { X, AlertCircle, CheckCircle, Info, ChevronDown, ChevronUp, ShieldAlert } from 'lucide-react';
 import api from '../../services/api';
-
-// ── Constants ─────────────────────────────────────────────────────────────────
-
-const LOT_SIZES = {
-  NIFTY: 50, BANKNIFTY: 15, FINNIFTY: 40, MIDCPNIFTY: 75, SENSEX: 10, DEFAULT: 1,
-};
-
-const UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX'];
-
-// Generate nearest expiry dates (monthly + weekly Nifty pattern)
-function getExpiryOptions() {
-  const dates = [];
-  const now = new Date();
-  for (let i = 0; i < 12; i++) {
-    const d = new Date(now);
-    d.setDate(d.getDate() + (i * 7));
-    // Find next Thursday
-    while (d.getDay() !== 4) d.setDate(d.getDate() + 1);
-    const dd = String(d.getDate()).padStart(2, '0');
-    const mon = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
-    const yy  = String(d.getFullYear()).slice(2);
-    dates.push(`${dd}${mon}${yy}`);
-  }
-  return [...new Set(dates)].slice(0, 8);
-}
-
-function buildFOSymbol(underlying, expiry, strike, optionType, isFutures) {
-  if (!underlying || !expiry) return '';
-  if (isFutures) return `${underlying}${expiry}FUT`;
-  if (!strike || !optionType) return '';
-  return `${underlying}${expiry}${strike}${optionType}`;
-}
-
-function getLotSize(underlying) {
-  return LOT_SIZES[underlying] || LOT_SIZES.DEFAULT;
-}
+import { UNDERLYINGS, getSpec, getLotSize, expiriesFor, expiryLabel, buildFOSymbol, SEBI_FO_WARNING } from '../../utils/fo';
 
 function fmtINR(n) {
-  if (!n && n !== 0) return '—';
+  if (n == null || n === '') return '—';
   return '₹' + Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
-
-// ── Component ──────────────────────────────────────────────────────────────────
 
 export default function OrderTicket({
   isOpen,
   onClose,
   onTrade,
+  onModified,
   initialSymbol = 'RELIANCE',
-  initialSide   = 'buy',
-  initialPrice  = 0,
-  quotes        = {},
-  holdings      = {},
-  balance       = 0,
-  // For option chain integration: pre-fill F&O params
-  initialSegment    = 'EQ',    // 'EQ' | 'FO'
+  initialSide = 'buy',
+  initialPrice = 0,
+  quotes = {},
+  holdings = {},
+  balance = 0,
+  initialSegment = 'EQ',
   initialUnderlying = 'NIFTY',
-  initialExpiry     = '',
-  initialStrike     = '',
-  initialOptionType = 'CE',    // 'CE' | 'PE'
-  initialIsFutures  = false,
+  initialExpiry = '',
+  initialStrike = '',
+  initialOptionType = 'CE',
+  initialIsFutures = false,
+  // Kite-parity additions
+  mode = 'place', // 'place' | 'modify'
+  modifyOrder = null, // order object when mode === 'modify'
+  initialExchange = 'NSE',
 }) {
-  // Segment
   const [segment, setSegment] = useState(initialSegment);
-
-  // EQ state
   const [eqSymbol, setEqSymbol] = useState(initialSymbol);
+  const [exchange, setExchange] = useState(initialExchange);
+  const [foUnderlying, setFoUnderlying] = useState(initialUnderlying);
+  const [foExpiry, setFoExpiry] = useState(initialExpiry || expiriesFor(initialUnderlying)[0]?.code || '');
+  const [foStrike, setFoStrike] = useState(initialStrike || '');
+  const [foOptionType, setFoOptionType] = useState(initialOptionType);
+  const [foIsFutures, setFoIsFutures] = useState(initialIsFutures);
 
-  // F&O state
-  const [foUnderlying, setFoUnderlying]     = useState(initialUnderlying);
-  const [foExpiry, setFoExpiry]             = useState(initialExpiry || getExpiryOptions()[0]);
-  const [foStrike, setFoStrike]             = useState(initialStrike || '');
-  const [foOptionType, setFoOptionType]     = useState(initialOptionType);
-  const [foIsFutures, setFoIsFutures]       = useState(initialIsFutures);
-
-  // Order params
-  const [side, setSide]               = useState(initialSide);
+  const [side, setSide] = useState(initialSide);
   const [productType, setProductType] = useState(segment === 'FO' ? 'NRML' : 'CNC');
-  const [orderType, setOrderType]     = useState('MARKET');
-  const [limitPrice, setLimitPrice]   = useState('');
+  const [orderType, setOrderType] = useState('MARKET');
+  const [limitPrice, setLimitPrice] = useState('');
   const [triggerPrice, setTriggerPrice] = useState('');
-  const [validity, setValidity]       = useState('DAY');
-  const [lots, setLots]               = useState(1);
+  const [disclosedQty, setDisclosedQty] = useState('');
+  const [validity, setValidity] = useState('DAY');
+  const [lots, setLots] = useState(1);
 
-  // UI state
-  const [loading, setLoading]         = useState(false);
-  const [result, setResult]           = useState(null);
-  const [error, setError]             = useState('');
-  const [marginData, setMarginData]   = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState('');
+  const [marginData, setMarginData] = useState(null);
   const [marginLoading, setMarginLoading] = useState(false);
   const [showCostBreakdown, setShowCostBreakdown] = useState(false);
+  const [session, setSession] = useState(null);
 
   const marginTimerRef = useRef(null);
-  const expiries = getExpiryOptions();
+  // SEBI Tue/Thu expiries per underlying (NSE Tue, BSE Thu; weeklies NIFTY/SENSEX only)
+  const expiries = expiriesFor(foUnderlying);
+  const foSpec = getSpec(foUnderlying);
+  const isModify = mode === 'modify' && modifyOrder;
 
-  // Derived values
   const symbol = segment === 'EQ'
     ? eqSymbol
     : buildFOSymbol(foUnderlying, foExpiry, foStrike, foOptionType, foIsFutures);
 
-  const lotSize     = segment === 'FO' ? getLotSize(foUnderlying) : 1;
-  const quantity    = segment === 'FO' ? lots * lotSize : lots;
-  const liveQuote   = quotes[symbol] || quotes[eqSymbol] || null;
-  const livePrice   = liveQuote?.price || initialPrice || 0;
-  const execPrice   = orderType === 'MARKET' ? livePrice : (Number(limitPrice) || 0);
-  const holding     = holdings[symbol] || null;
-  const heldQty     = holding?.quantity || 0;
+  // F&O is punched in LOTS on every Indian broker: qty = lots × lotSize (NSE FAOP/70616)
+  const lotSize = segment === 'FO' ? getLotSize(foUnderlying) : 1;
+  const quantity = segment === 'FO' ? lots * lotSize : lots;
+  const freezeLots = foSpec?.freezeLots || 0;
+  const liveQuote = quotes[symbol] || quotes[eqSymbol] || null;
+  const livePrice = liveQuote?.price || initialPrice || Number(modifyOrder?.price) || 0;
+  const execPrice = orderType === 'MARKET' ? livePrice : (Number(limitPrice) || 0);
+  const holding = holdings[symbol] || null;
+  const heldQty = holding?.quantity || 0;
 
-  // Reset state on open
+  const isAmo = session && session.session !== 'OPEN';
+
+  // Session for AMO badge (Kite shows AMO whenever market is closed)
   useEffect(() => {
-    if (isOpen) {
+    if (!isOpen) return;
+    api.getSession().then(setSession).catch(() => {});
+  }, [isOpen]);
+
+  // Reset / prefill on open
+  useEffect(() => {
+    if (!isOpen) return;
+    if (isModify) {
+      const o = modifyOrder;
+      const sym = o.instrument?.tradingSymbol?.replace('.NS', '').replace('.BO', '') || initialSymbol;
+      setEqSymbol(sym);
+      setSide((o.side || 'BUY').toLowerCase());
+      setOrderType(o.orderType || 'LIMIT');
+      setProductType(o.productType || 'CNC');
+      setValidity(o.validity || 'DAY');
+      setLimitPrice(o.price ? String(o.price) : '');
+      setTriggerPrice(o.triggerPrice ? String(o.triggerPrice) : '');
+      setDisclosedQty(o.disclosedQuantity ? String(o.disclosedQuantity) : '');
+      setLots(Number(o.quantity) || 1);
+      setSegment('EQ');
+    } else {
       setSegment(initialSegment);
       setEqSymbol(initialSymbol);
       setFoUnderlying(initialUnderlying);
-      setFoExpiry(initialExpiry || getExpiryOptions()[0]);
+      setFoExpiry(initialExpiry || expiriesFor(initialUnderlying)[0]?.code || '');
       setFoStrike(initialStrike || '');
       setFoOptionType(initialOptionType);
       setFoIsFutures(initialIsFutures);
@@ -137,19 +124,18 @@ export default function OrderTicket({
       setLots(1);
       setLimitPrice(initialPrice > 0 ? String(initialPrice) : '');
       setTriggerPrice('');
+      setDisclosedQty('');
       setOrderType('MARKET');
-      setResult(null);
-      setError('');
-      setMarginData(null);
     }
-  }, [isOpen, initialSymbol, initialSide, initialSegment]);
+    setResult(null);
+    setError('');
+    setMarginData(null);
+  }, [isOpen]); // eslint-disable-line
 
-  // Set product type based on segment
   useEffect(() => {
-    setProductType(segment === 'FO' ? 'NRML' : 'CNC');
-  }, [segment]);
+    if (!isModify) setProductType(segment === 'FO' ? 'NRML' : 'CNC');
+  }, [segment]); // eslint-disable-line
 
-  // Debounced margin fetch
   const fetchMargin = useCallback(async () => {
     if (!symbol || !execPrice || !quantity) return;
     setMarginLoading(true);
@@ -174,44 +160,73 @@ export default function OrderTicket({
     setError('');
     setResult(null);
 
-    if (!execPrice) { setError('Live price unavailable. Wait for market data.'); return; }
+    // ── Modify path (Kite: modify pending order) ──
+    if (isModify) {
+      if (orderType !== 'MARKET' && !limitPrice) { setError('Enter a limit price.'); return; }
+      if ((orderType === 'SL' || orderType === 'SL-M') && !triggerPrice) { setError('Enter a trigger price for SL order.'); return; }
+      setLoading(true);
+      try {
+        const patch = {
+          price: orderType === 'MARKET' ? modifyOrder.price : Number(limitPrice),
+          quantity,
+          triggerPrice: triggerPrice ? Number(triggerPrice) : null,
+          validity,
+          disclosedQuantity: disclosedQty ? Number(disclosedQty) : null,
+          orderType,
+        };
+        const res = await api.modifyOrder(modifyOrder.id, patch);
+        setResult({ success: true, message: `Order modified — ${symbol} · Qty ${quantity} @ ${fmtINR(patch.price)}`, trade: res.order });
+        onModified?.(res.order);
+      } catch (e) {
+        setError(e.message);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    // ── Place path ──
+    if (!execPrice) { setError('Live price unavailable. Wait for market data or enter a limit price.'); return; }
     if (quantity <= 0) { setError('Invalid quantity.'); return; }
     if (orderType !== 'MARKET' && !limitPrice) { setError('Enter a limit / trigger price.'); return; }
-    if ((orderType === 'SL' || orderType === 'SL-M') && !triggerPrice) {
-      setError('Enter a trigger price for SL order.'); return;
-    }
-    if (segment === 'FO' && !symbol.includes('FUT') && !foStrike) {
-      setError('Select a strike price.'); return;
-    }
+    if ((orderType === 'SL' || orderType === 'SL-M') && !triggerPrice) { setError('Enter a trigger price for SL order.'); return; }
+    if (segment === 'FO' && !symbol.includes('FUT') && !foStrike) { setError('Select a strike price.'); return; }
+    if (segment === 'FO' && freezeLots > 0 && lots > freezeLots) { setError(`NSE freeze quantity exceeded: max ${freezeLots} lots (${freezeLots * lotSize} qty) per order. Split your order.`); return; }
+    if (disclosedQty && Number(disclosedQty) > quantity) { setError('Disclosed quantity cannot exceed total quantity (max 10% rule on real exchanges).'); return; }
 
     setLoading(true);
     try {
       const payload = {
         type: side,
-        symbol,
+        symbol: exchange === 'BSE' && segment === 'EQ' && !symbol.endsWith('.BO') ? `${symbol}.BO` : symbol,
         quantity,
         price: execPrice,
         orderType,
         productType,
         validity,
         triggerPrice: triggerPrice ? Number(triggerPrice) : undefined,
+        disclosedQuantity: disclosedQty ? Number(disclosedQty) : undefined,
       };
       const response = await onTrade(payload);
-
       if (!response?.success && response?.violations?.length > 0) {
         setError(response.violations[0].message);
         return;
       }
-
+      const filledNow = response?.order?.status === 'FILLED';
       setResult({
         success: true,
-        message: `${side.toUpperCase()} ${quantity} × ${symbol} @ ${fmtINR(execPrice)}`,
+        message: isAmo
+          ? `AMO ${side.toUpperCase()} ${quantity} × ${symbol} @ ${fmtINR(execPrice)} — queued for next open (09:15 IST)`
+          : filledNow
+            ? `${side.toUpperCase()} ${quantity} × ${symbol} @ ${fmtINR(execPrice)} — Complete`
+            : `${side.toUpperCase()} ${quantity} × ${symbol} @ ${fmtINR(execPrice)} — ${response?.order?.status || 'Open'}`,
         trade: response?.trade,
         block: response?.block || response?.trade,
       });
       setLots(1);
       setLimitPrice('');
       setTriggerPrice('');
+      setDisclosedQty('');
     } catch (e) {
       setError(e.message);
     } finally {
@@ -222,312 +237,250 @@ export default function OrderTicket({
   if (!isOpen) return null;
 
   const needsTrigger = orderType === 'SL' || orderType === 'SL-M';
-  const needsLimit   = orderType === 'LIMIT' || orderType === 'GTT' || orderType === 'SL';
-  const priceColor   = liveQuote?.changePercent >= 0 ? 'var(--gain)' : 'var(--loss)';
+  const needsLimit = orderType === 'LIMIT' || orderType === 'GTT' || orderType === 'SL';
+  const priceColor = liveQuote?.changePercent >= 0 ? 'var(--gain)' : 'var(--loss)';
 
   return (
-    <div className="order-ticket-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="order-ticket">
-        {/* Header */}
-        <div className="ot-header">
-          <div className="ot-header-left">
-            <Zap size={16} style={{ color: 'var(--accent-primary)' }} />
-            <span className="ot-symbol-badge">{symbol || 'Select Instrument'}</span>
-            <span className="ot-exchange-badge">NSE</span>
-          </div>
-          <button className="ot-close-btn" onClick={onClose}>×</button>
+    <div className="kite-dock-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="kite-dock">
+        <div className={`kite-dock-head ${side}`}>
+          <span style={{ fontWeight: 800, fontSize: 14, color: side === 'buy' ? '#5b9bd5' : '#eb5a47' }}>
+            {isModify ? 'MODIFY ORDER' : side === 'buy' ? 'BUY' : 'SELL'}
+          </span>
+          <span style={{ fontWeight: 800, fontSize: 14 }}>{symbol || 'Select Instrument'}</span>
+          <span className="kite-exch">{exchange}</span>
+          <span className="kite-chip" style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)' }}>{segment}</span>
+          {isAmo && <span className="kite-amo-badge">AMO — market {session?.session?.toLowerCase().replace(/_/g, ' ')}, executes at next open</span>}
+          <button onClick={onClose} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 20, cursor: 'pointer' }}><X size={18} /></button>
         </div>
 
-        <div className="ot-body">
-          {/* BUY / SELL Toggle */}
-          <div className="ot-side-toggle">
-            <button className={`ot-side-btn buy ${side === 'buy' ? 'active' : ''}`} onClick={() => setSide('buy')}>
-              ▲ BUY
-            </button>
-            <button className={`ot-side-btn sell ${side === 'sell' ? 'active' : ''}`} onClick={() => setSide('sell')}>
-              ▼ SELL
-            </button>
-          </div>
-
-          {/* Segment: EQ | F&O */}
-          <div className="ot-tab-group">
-            <div className="ot-tab-label">Segment</div>
-            <div className="ot-tabs">
+        <div className="kite-dock-body">
+          {/* Col 1: side + segment + instrument */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {!isModify && (
+              <div className="kite-seg">
+                <button className={side === 'buy' ? 'active' : ''} onClick={() => setSide('buy')}>Buy</button>
+                <button className={side === 'sell' ? 'active sell-active' : ''} onClick={() => setSide('sell')}>Sell</button>
+                <div className="kite-exch-toggle" style={{ marginLeft: 'auto' }}>
+                  {['NSE', 'BSE'].map(e => (
+                    <button key={e} className={exchange === e ? 'active' : ''} onClick={() => setExchange(e)}>{e}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="kite-seg">
               {['EQ', 'FO'].map(s => (
-                <button key={s} className={`ot-tab ${segment === s ? 'active' : ''}`} onClick={() => setSegment(s)}>
-                  {s === 'FO' ? 'F&O' : s}
-                </button>
+                <button key={s} className={segment === s ? 'active' : ''} onClick={() => setSegment(s)} disabled={isModify}>{s === 'FO' ? 'F&O' : 'EQ'}</button>
               ))}
             </div>
-          </div>
-
-          {/* F&O Instrument Builder */}
-          {segment === 'FO' && (
-            <div className="ot-fo-builder">
-              <div className="ot-tab-group">
-                <div className="ot-tab-label">Type</div>
-                <div className="ot-tabs">
-                  <button className={`ot-tab ${!foIsFutures ? 'active' : ''}`} onClick={() => setFoIsFutures(false)}>Options</button>
-                  <button className={`ot-tab ${foIsFutures ? 'active' : ''}`} onClick={() => setFoIsFutures(true)}>Futures</button>
-                </div>
+            {segment === 'EQ' ? (
+              <div className="kite-field">
+                <label>Symbol</label>
+                <input value={eqSymbol} onChange={e => setEqSymbol(e.target.value.toUpperCase())} placeholder="RELIANCE, TCS, INFY" disabled={isModify} />
               </div>
-
-              <div className="ot-fo-row">
-                <div className="ot-form-group">
-                  <div className="ot-tab-label">Underlying</div>
-                  <select className="ot-select" value={foUnderlying} onChange={e => setFoUnderlying(e.target.value)}>
-                    {UNDERLYINGS.map(u => <option key={u}>{u}</option>)}
-                  </select>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 10, background: 'var(--bg-surface)', borderRadius: 10, border: '1px solid var(--border)' }}>
+                <div className="kite-seg">
+                  <button className={!foIsFutures ? 'active' : ''} onClick={() => setFoIsFutures(false)}>Options</button>
+                  <button className={foIsFutures ? 'active' : ''} onClick={() => setFoIsFutures(true)}>Futures</button>
                 </div>
-                <div className="ot-form-group">
-                  <div className="ot-tab-label">Expiry</div>
-                  <select className="ot-select" value={foExpiry} onChange={e => setFoExpiry(e.target.value)}>
-                    {expiries.map(e => <option key={e}>{e}</option>)}
-                  </select>
-                </div>
-              </div>
-
-              {!foIsFutures && (
-                <div className="ot-fo-row triple">
-                  <div className="ot-form-group">
-                    <div className="ot-tab-label">Strike</div>
-                    <input className="ot-input" type="number" placeholder="e.g. 24700" value={foStrike}
-                      onChange={e => setFoStrike(e.target.value)} />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <div className="kite-field">
+                    <label>Underlying (lot · exch)</label>
+                    <select value={foUnderlying} onChange={e => {
+                      const u = e.target.value;
+                      setFoUnderlying(u);
+                      const first = expiriesFor(u)[0]?.code || '';
+                      setFoExpiry(first);
+                      const spec = getSpec(u);
+                      if (spec) setExchange(spec.exchange);
+                    }}>
+                      {Object.entries(UNDERLYINGS).map(([u, s]) => (
+                        <option key={u} value={u}>{u} · {s.lot} · {s.exchange}</option>
+                      ))}
+                    </select>
                   </div>
-                  <div className="ot-form-group" style={{ gridColumn: 'span 2' }}>
-                    <div className="ot-tab-label">Option Type</div>
-                    <div className="ot-tabs">
-                      <button className={`ot-tab ${foOptionType === 'CE' ? 'active' : ''}`} onClick={() => setFoOptionType('CE')}>CE (Call)</button>
-                      <button className={`ot-tab ${foOptionType === 'PE' ? 'active' : ''}`} onClick={() => setFoOptionType('PE')}>PE (Put)</button>
+                  <div className="kite-field">
+                    <label>Expiry (W=weekly M=monthly)</label>
+                    <select value={foExpiry} onChange={e => setFoExpiry(e.target.value)}>
+                      {expiries.map(e => <option key={e.code} value={e.code}>{expiryLabel(e)}</option>)}
+                    </select>
+                  </div>
+                </div>
+                {!foIsFutures && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                    <div className="kite-field">
+                      <label>Strike</label>
+                      <input type="number" placeholder="24700" value={foStrike} onChange={e => setFoStrike(e.target.value)} />
+                    </div>
+                    <div className="kite-field">
+                      <label>CE / PE</label>
+                      <select value={foOptionType} onChange={e => setFoOptionType(e.target.value)}>
+                        <option>CE</option><option>PE</option>
+                      </select>
                     </div>
                   </div>
-                </div>
-              )}
-
-              {symbol && (
-                <div className="ot-generated-symbol">
-                  📋 Symbol: {symbol}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* EQ Symbol */}
-          {segment === 'EQ' && (
-            <div className="ot-form-group">
-              <div className="ot-tab-label">Symbol</div>
-              <input className="ot-input" value={eqSymbol} onChange={e => setEqSymbol(e.target.value.toUpperCase())}
-                placeholder="e.g. RELIANCE, TCS, INFY" />
-            </div>
-          )}
-
-          {/* Live Price */}
-          {liveQuote && (
-            <div className="ot-live-price">
-              <div>
-                <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>LTP (Last Traded Price)</div>
-                <div className="ot-price-value" style={{ color: priceColor }}>{fmtINR(livePrice)}</div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <div className={`ot-price-change ${liveQuote.changePercent >= 0 ? 'gain' : 'loss'}`}>
-                  {liveQuote.changePercent >= 0 ? '+' : ''}{liveQuote.changePercent?.toFixed(2)}%
-                </div>
-                {heldQty !== 0 && (
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
-                    Position: {heldQty > 0 ? `+${heldQty}` : heldQty} @ {fmtINR(holding?.avgPrice)}
+                )}
+                {symbol && <div style={{ fontSize: 11, color: 'var(--accent-secondary)', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>📋 {symbol} · 1 lot = {lotSize} qty</div>}
+                {foSpec && <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                  {foSpec.label} · {foSpec.exchange} · {foSpec.weeklies ? 'Weekly + Monthly expiries' : 'Monthly expiries only (SEBI)'} · Max {foSpec.freezeLots} lots/order (freeze qty)
+                </div>}
+                {freezeLots > 0 && lots > freezeLots && (
+                  <div style={{ fontSize: 11, color: 'var(--loss)', fontWeight: 700 }}>
+                    Exceeds NSE freeze quantity ({freezeLots} lots). Split into multiple orders.
                   </div>
                 )}
               </div>
-            </div>
-          )}
-
-          {/* Product Type */}
-          <div className="ot-tab-group">
-            <div className="ot-tab-label">Product Type</div>
-            <div className="ot-tabs">
-              {segment === 'EQ' ? (
-                <>
-                  <button className={`ot-tab ${productType === 'CNC' ? 'active' : ''}`} onClick={() => setProductType('CNC')} title="Delivery — hold multiple days">Delivery (CNC)</button>
-                  <button className={`ot-tab ${productType === 'MIS' ? 'active' : ''}`} onClick={() => setProductType('MIS')} title="Intraday — auto SQ-OFF at 3:15 PM">Intraday (MIS)</button>
-                </>
-              ) : (
-                <>
-                  <button className={`ot-tab ${productType === 'NRML' ? 'active' : ''}`} onClick={() => setProductType('NRML')} title="Overnight F&O carry">Normal (NRML)</button>
-                  <button className={`ot-tab ${productType === 'MIS' ? 'active' : ''}`} onClick={() => setProductType('MIS')} title="Intraday — reduced margin, SQ-OFF at 3:15">Intraday (MIS)</button>
-                </>
-              )}
-            </div>
-            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
-              {productType === 'CNC' && 'Equity delivery — hold for multiple days. No leverage.'}
-              {productType === 'MIS' && segment === 'EQ' && 'Intraday Equity — 5x leverage. Auto square-off at 3:15 PM IST.'}
-              {productType === 'MIS' && segment === 'FO' && 'Intraday F&O — reduced margin. Auto square-off at 3:15 PM IST.'}
-              {productType === 'NRML' && 'F&O overnight carry (Options & Futures) — SPAN + Exposure margin required.'}
-            </div>
-          </div>
-
-          {/* Order Type + Validity */}
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 8 }}>
-            <div className="ot-tab-group">
-              <div className="ot-tab-label">Order Type</div>
-              <select className="ot-select" value={orderType} onChange={e => setOrderType(e.target.value)}>
-                <option value="MARKET">Market</option>
-                <option value="LIMIT">Limit</option>
-                <option value="SL">SL (Stop-Loss Limit)</option>
-                <option value="SL-M">SL-M (Stop-Loss Market)</option>
-                <option value="GTT">GTT (Good Till Triggered)</option>
-                <option value="IOC">IOC (Immediate or Cancel)</option>
-              </select>
-            </div>
-            <div className="ot-tab-group">
-              <div className="ot-tab-label">Validity</div>
-              <select className="ot-select" value={validity} onChange={e => setValidity(e.target.value)}>
-                <option value="DAY">DAY</option>
-                <option value="IOC">IOC</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Limit Price */}
-          {needsLimit && (
-            <div className="ot-form-group">
-              <div className="ot-tab-label">Limit Price (₹)</div>
-              <input type="number" className="ot-input" value={limitPrice} onChange={e => setLimitPrice(e.target.value)}
-                placeholder={`e.g. ${livePrice ? livePrice.toFixed(2) : '0.00'}`} />
-            </div>
-          )}
-
-          {/* Trigger Price for SL */}
-          {needsTrigger && (
-            <div className="ot-form-group">
-              <div className="ot-tab-label">Trigger Price (₹) <span style={{ color: 'var(--loss)' }}>*</span></div>
-              <input type="number" className="ot-input" value={triggerPrice} onChange={e => setTriggerPrice(e.target.value)}
-                placeholder="Price at which order triggers" />
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
-                {side === 'sell' ? 'Below this price → order triggers (stop-loss)' : 'Above this price → order triggers (breakout buy)'}
+            )}
+            {segment === 'FO' && !isModify && (
+              <div className="ot-alert" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.35)', color: '#f59e0b', display: 'flex', gap: 8, padding: '8px 10px', borderRadius: 8, fontSize: 11 }}>
+                <ShieldAlert size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+                <span>{SEBI_FO_WARNING}</span>
               </div>
-            </div>
-          )}
-
-          {/* Quantity / Lots */}
-          <div className="ot-form-group">
-            <div className="ot-tab-label">
-              {segment === 'FO' ? `Lots (1 lot = ${lotSize} qty)` : 'Quantity (Shares)'}
-            </div>
-            <div className="ot-qty-row">
-              <button className="ot-qty-btn" onClick={() => setLots(q => Math.max(1, Number(q) - 1))}>−</button>
-              <input type="number" className="ot-input" value={lots}
-                onChange={e => setLots(Math.max(1, Number(e.target.value)))} min={1}
-                style={{ textAlign: 'center', flex: 1 }} />
-              <button className="ot-qty-btn" onClick={() => setLots(q => Number(q) + 1)}>+</button>
-            </div>
-            {segment === 'FO' && (
-              <div className="ot-qty-hint">Total qty: {quantity} × {fmtINR(execPrice || 0)} = {fmtINR(quantity * (execPrice || 0))}</div>
+            )}
+            {liveQuote && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'var(--bg-surface)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                <div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>LTP · {exchange}</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, fontFamily: 'var(--font-mono)', color: priceColor }}>{fmtINR(livePrice)}</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: priceColor }}>
+                    {(liveQuote.changePercent ?? 0) >= 0 ? '+' : ''}{Number(liveQuote.changePercent ?? 0).toFixed(2)}%
+                  </div>
+                  {heldQty !== 0 && <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Pos: {heldQty > 0 ? `+${heldQty}` : heldQty} @ {fmtINR(holding?.avgPrice)}</div>}
+                </div>
+              </div>
             )}
           </div>
 
-          {/* Real-time Margin Preview */}
-          {(execPrice > 0 && quantity > 0) && (
-            <div className="ot-margin-panel">
-              <div className="ot-margin-header">
-                <span>Margin Required</span>
-                <span className={`ot-margin-required ${marginData ? (marginData.sufficient ? 'ot-margin-sufficient' : 'ot-margin-insufficient') : ''}`}>
-                  {marginLoading ? '…' : marginData ? fmtINR(marginData.margin?.required) : fmtINR(execPrice * quantity)}
+          {/* Col 2: product + type + prices */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div className="kite-field">
+              <label>Product {productType === 'MIS' ? '· 5x leverage, SQ-OFF 15:15' : productType === 'CNC' ? '· delivery, hold days' : '· F&O overnight'}</label>
+              <div className="kite-seg">
+                {(segment === 'EQ' ? ['CNC', 'MIS'] : ['NRML', 'MIS']).map(p => (
+                  <button key={p} className={productType === p ? 'active' : ''} onClick={() => setProductType(p)}>{p}</button>
+                ))}
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <div className="kite-field">
+                <label>Order type</label>
+                <select value={orderType} onChange={e => setOrderType(e.target.value)}>
+                  <option value="MARKET">MARKET</option>
+                  <option value="LIMIT">LIMIT</option>
+                  <option value="SL">SL</option>
+                  <option value="SL-M">SL-M</option>
+                  <option value="GTT">GTT</option>
+                  <option value="IOC">IOC</option>
+                </select>
+              </div>
+              <div className="kite-field">
+                <label>Validity</label>
+                <select value={validity} onChange={e => setValidity(e.target.value)}>
+                  <option value="DAY">DAY</option>
+                  <option value="IOC">IOC</option>
+                </select>
+              </div>
+            </div>
+            {needsLimit && (
+              <div className="kite-field">
+                <label>Limit price (₹)</label>
+                <input type="number" value={limitPrice} onChange={e => setLimitPrice(e.target.value)} placeholder={livePrice ? Number(livePrice).toFixed(2) : '0.00'} />
+              </div>
+            )}
+            {needsTrigger && (
+              <div className="kite-field">
+                <label>Trigger price (₹) *</label>
+                <input type="number" value={triggerPrice} onChange={e => setTriggerPrice(e.target.value)} placeholder="Trigger level" />
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                  {side === 'sell' ? 'Below LTP → sell stop triggers' : 'Above LTP → buy stop triggers'}
+                </div>
+              </div>
+            )}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <div className="kite-field">
+                <label>{segment === 'FO' ? `Lots (1 = ${lotSize})` : 'Qty (shares)'}</label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button onClick={() => setLots(q => Math.max(1, Number(q) - 1))} style={{ width: 32, borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-primary)', cursor: 'pointer' }}>−</button>
+                  <input type="number" value={lots} onChange={e => setLots(Math.max(1, Number(e.target.value)))} min={1} style={{ textAlign: 'center' }} />
+                  <button onClick={() => setLots(q => Number(q) + 1)} style={{ width: 32, borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-primary)', cursor: 'pointer' }}>+</button>
+                </div>
+                {segment === 'FO' && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>Total {quantity} × {fmtINR(execPrice || 0)} = {fmtINR(quantity * (execPrice || 0))}</div>}
+              </div>
+              <div className="kite-field">
+                <label>Disclosed qty (optional)</label>
+                <input type="number" value={disclosedQty} onChange={e => setDisclosedQty(e.target.value)} placeholder="≤ 10% visible" />
+              </div>
+            </div>
+          </div>
+
+          {/* Col 3: margin + charges + submit */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700 }}>MARGIN REQUIRED</span>
+                <span style={{ fontSize: 16, fontWeight: 800, fontFamily: 'var(--font-mono)', color: marginData && !marginData.sufficient ? 'var(--loss)' : 'var(--text-primary)' }}>
+                  {marginLoading ? '…' : marginData ? fmtINR(marginData.margin?.required) : fmtINR((execPrice || 0) * (quantity || 0))}
                 </span>
               </div>
               {marginData && (
-                <>
-                  <div className="ot-margin-rows">
-                    {Object.entries(marginData.margin?.breakdown || {}).map(([label, val]) => (
-                      <div className="ot-margin-row" key={label}>
-                        <span className="ot-margin-row-label">{label}</span>
-                        <span className="ot-margin-row-value">{val}</span>
-                      </div>
-                    ))}
-                    <div className="ot-margin-row" style={{ color: marginData.sufficient ? 'var(--gain)' : 'var(--loss)' }}>
-                      <span>Available Balance</span>
-                      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{fmtINR(marginData.available)}</span>
-                    </div>
+                <div style={{ marginTop: 6, fontSize: 11 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Available</span>
+                    <b style={{ fontFamily: 'var(--font-mono)', color: marginData.sufficient ? 'var(--gain)' : 'var(--loss)' }}>{fmtINR(marginData.available)}</b>
                   </div>
-                  {marginData.margin?.note && (
-                    <div className="ot-margin-note">{marginData.margin.note}</div>
-                  )}
                   {marginData.margin?.leverage && marginData.margin.leverage !== '1x' && (
-                    <div style={{ fontSize: 11, color: 'var(--accent-primary)', padding: '4px 12px', fontWeight: 700 }}>
-                      ⚡ {marginData.margin.leverage} leverage
-                    </div>
+                    <div style={{ color: '#387ed1', fontWeight: 800, marginTop: 2 }}>⚡ {marginData.margin.leverage} leverage · {productType}</div>
                   )}
-                </>
-              )}
-            </div>
-          )}
-
-          {/* Cost Breakdown (collapsible) */}
-          {marginData?.costs && (
-            <div className="ot-cost-panel">
-              <div className="ot-cost-header" onClick={() => setShowCostBreakdown(s => !s)}>
-                <span>Charges Breakdown</span>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
-                    {fmtINR(marginData.costs.totalCost)}
-                  </span>
-                  {showCostBreakdown ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                </span>
-              </div>
-              {showCostBreakdown && (
-                <div className="ot-cost-rows">
-                  {(marginData.costs.lineItems || []).map((item, i) => (
-                    <div key={i} className={`ot-cost-row ${item.label.includes('Total') || item.label.includes('Net') ? 'total' : ''}`}>
-                      <span style={{ color: 'var(--text-muted)' }}>{item.label}</span>
-                      <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtINR(item.value)}</span>
-                    </div>
-                  ))}
-                  {marginData.costs.breakEvenPrice > 0 && (
-                    <div className="ot-cost-row" style={{ color: 'var(--accent-primary)', fontWeight: 700 }}>
-                      <span>Break-even Price</span>
-                      <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtINR(marginData.costs.breakEvenPrice)}</span>
-                    </div>
-                  )}
+                  {marginData.margin?.note && <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', marginTop: 2 }}>{marginData.margin.note}</div>}
                 </div>
               )}
             </div>
-          )}
 
-          {/* Error / Result */}
-          {error && (
-            <div className="ot-alert error">
-              <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
-              <span>{error}</span>
-            </div>
-          )}
-          {result?.success && (
-            <div className="ot-alert success">
-              <CheckCircle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
-              <div>
-                <div>{result.message} — Submitted!</div>
-                {(result.block?.blockHash || result.trade?.blockHash) && (
-                  <div className="ot-block-hash">
-                    ⛓ Block #{result.block?.blockIndex || result.trade?.blockIndex} · {(result.block?.blockHash || result.trade?.blockHash)?.slice(0, 24)}…
+            {marginData?.costs && (
+              <div style={{ borderRadius: 10, border: '1px solid var(--border)', overflow: 'hidden' }}>
+                <div onClick={() => setShowCostBreakdown(s => !s)} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', background: 'var(--bg-surface)', fontSize: 11, fontWeight: 800, color: 'var(--text-muted)', cursor: 'pointer' }}>
+                  <span>CHARGES (Zerodha-style)</span>
+                  <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>{fmtINR(marginData.costs.totalCost)} {showCostBreakdown ? <ChevronUp size={13} /> : <ChevronDown size={13} />}</span>
+                </div>
+                {showCostBreakdown && (
+                  <div style={{ padding: '4px 0' }}>
+                    {(marginData.costs.lineItems || []).map((item, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 12px', fontSize: 11.5 }}>
+                        <span style={{ color: 'var(--text-muted)' }}>{item.label}</span>
+                        <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtINR(item.value)}</span>
+                      </div>
+                    ))}
+                    {marginData.costs.breakEvenPrice > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 12px', fontSize: 11.5, fontWeight: 800, color: '#387ed1' }}>
+                        <span>Break-even</span><span style={{ fontFamily: 'var(--font-mono)' }}>{fmtINR(marginData.costs.breakEvenPrice)}</span>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Submit */}
-          <button
-            className={`ot-submit-btn ${side}`}
-            onClick={handleTrade}
-            disabled={loading || (!execPrice && orderType === 'MARKET')}
-          >
-            {loading ? 'Executing…' : `${side === 'buy' ? '▲ BUY' : '▼ SELL'} ${symbol || '—'} — ${productType}`}
-          </button>
+            {error && <div className="ot-alert error"><AlertCircle size={14} /><span>{error}</span></div>}
+            {result?.success && (
+              <div className="ot-alert success"><CheckCircle size={14} /><div><div>{result.message}</div>
+                {(result.block?.blockHash || result.trade?.blockHash) && (
+                  <div className="ot-block-hash">⛓ Block #{result.block?.blockIndex || result.trade?.blockIndex} · {(result.block?.blockHash || result.trade?.blockHash)?.slice(0, 24)}…</div>
+                )}</div></div>
+            )}
 
-          {!marginData?.sufficient && marginData && !result?.success && (
-            <div className="ot-alert info">
-              <Info size={14} style={{ flexShrink: 0 }} />
-              <span>Insufficient balance. Need {fmtINR(marginData.margin?.required)}, have {fmtINR(marginData.available)}.</span>
+            <button className={`kite-submit ${side}`} onClick={handleTrade} disabled={loading || (!execPrice && orderType === 'MARKET' && !isModify)}>
+              {loading ? 'Working…' : isModify ? `MODIFY → ${symbol}` : `${side === 'buy' ? 'BUY' : 'SELL'} ${symbol || '—'} · ${productType}${isAmo ? ' · AMO' : ''}`}
+            </button>
+            {!marginData?.sufficient && marginData && !result?.success && (
+              <div className="ot-alert info"><Info size={14} /><span>Insufficient balance. Need {fmtINR(marginData.margin?.required)}, have {fmtINR(marginData.available)}.</span></div>
+            )}
+            <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+              {isAmo ? 'AMO: order is queued and will execute at the next 09:15 IST open — like Zerodha/Upstox.' : 'DAY orders expire at 15:30 IST · MIS auto squared-off at 15:15 IST.'}
             </div>
-          )}
+          </div>
         </div>
       </div>
     </div>

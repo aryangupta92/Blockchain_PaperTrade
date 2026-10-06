@@ -3,7 +3,7 @@ import { Bell, LogOut, X, AlertTriangle, CheckCircle, Info } from 'lucide-react'
 import WalletConnect from '../Wallet/WalletConnect';
 import TopSearchBar from './TopSearchBar';
 
-export default function TopBar({ balance, quotes, marketStatus, user, onLogout, onOpenChart }) {
+export default function TopBar({ balance, quotes, marketStatus, user, onLogout, onOpenChart, onNav }) {
   const [showNotifs, setShowNotifs] = useState(false);
   const notifRef = useRef(null);
 
@@ -55,8 +55,13 @@ export default function TopBar({ balance, quotes, marketStatus, user, onLogout, 
       <div className="topbar-right" style={{ gap: 16 }}>
         <WalletConnect onConnect={(addr) => console.log('Wallet:', addr)} />
         
-        <div className="topbar-balance">
-          <div className="topbar-balance-label">Virtual Balance</div>
+        <div
+          className="topbar-balance"
+          title="Funds · Available margin — click for full margin statement (like Kite Funds)"
+          onClick={() => onNav?.('funds')}
+          style={{ cursor: onNav ? 'pointer' : 'default' }}
+        >
+          <div className="topbar-balance-label">Funds · Available</div>
           <div className="topbar-balance-val">
             ₹{balance?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) || '0.00'}
           </div>

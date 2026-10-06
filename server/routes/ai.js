@@ -7,15 +7,13 @@ const express = require('express');
 const router  = express.Router();
 const authMiddleware = require('../middleware/auth');
 const { PrismaClient } = require('@prisma/client');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const prisma = new PrismaClient();
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+const aiService = require('../services/aiService');
 
-// Helper to get Gemini model
+// Helper to get Gemini model (kept for compat; delegates to aiService)
 function getModel() {
-  if (!process.env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured');
-  return genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  return aiService.getModel();
 }
 
 // POST /api/ai/portfolio-insight
@@ -68,24 +66,19 @@ router.post('/journal-coach', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Journal not found' });
     }
 
-    const prompt = `You are an expert Trading Coach.
-Review the following trade journal entry and provide constructive feedback on the trader's mindset, setup, and risk management.
-Journal Entry:
-Title: ${journal.title}
-Setup: ${journal.setup}
-Thesis: ${journal.thesis}
-Mistakes: ${journal.mistakes}
-Learnings: ${journal.learnings}
-Rating: ${journal.rating}/5
-Emotions: Entry(${journal.emotionOnEntry}), Exit(${journal.emotionOnExit})
-Market Condition: ${journal.marketCondition}
-Risk/Reward: Planned(${journal.riskRewardPlanned}), Actual(${journal.riskRewardActual})
+    try { aiService.checkRateLimit(req.user.id); } catch (e) { return res.status(e.status || 429).json({ error: e.message }); }
+    const cacheKey = `journal:${journalId}:${journal.updatedAt?.toISOString?.() || ''}`;
+    const prompt = aiService.journalPrompt(journal);
 
-Provide short, punchy feedback in Markdown format. Highlight one good thing and one area of improvement.`;
-
-    const model = getModel();
-    const result = await model.generateContent(prompt);
-    res.json({ feedback: result.response.text() });
+    try {
+      const { text } = await aiService.generateText(prompt, { cacheKey });
+      return res.json({ feedback: text });
+    } catch (e) {
+      if (e.message.includes('not configured')) {
+        return res.json({ feedback: "_AI Coach is currently offline. Please configure GEMINI_API_KEY._" });
+      }
+      throw e;
+    }
   } catch (err) {
     // Graceful fallback if API key not present
     if (err.message.includes('not configured')) {
@@ -114,15 +107,19 @@ router.post('/portfolio-risk', authMiddleware, async (req, res) => {
       avgPrice: h.avgPrice
     }));
 
-    const prompt = `You are an expert AI Portfolio Risk Manager for the Indian Stock Market.
-Analyze the following portfolio and provide a comprehensive risk report.
-Include sector concentration, correlation risks (e.g. overexposure to financials), and a "what-if" scenario analysis (e.g. what if RBI hikes rates, or global tech slows down).
-Portfolio: ${JSON.stringify(portfolioData)}
-Return the response in structured Markdown format. Ensure it is highly professional and actionable.`;
+    try { aiService.checkRateLimit(req.user.id); } catch (e) { return res.status(e.status || 429).json({ error: e.message }); }
+    const cacheKey = `risk:${req.user.id}:${portfolioData.length}:${portfolioData.map(p => p.symbol + p.quantity).join(',').slice(0, 200)}`;
+    const prompt = aiService.riskPrompt(portfolioData);
 
-    const model = getModel();
-    const result = await model.generateContent(prompt);
-    res.json({ report: result.response.text() });
+    try {
+      const { text } = await aiService.generateText(prompt, { cacheKey });
+      return res.json({ report: text });
+    } catch (e) {
+      if (e.message.includes('not configured')) {
+        return res.json({ report: "_AI Risk Advisor is currently offline. Please configure GEMINI_API_KEY._" });
+      }
+      throw e;
+    }
   } catch (err) {
     if (err.message.includes('not configured')) {
        return res.json({ report: "_AI Risk Advisor is currently offline. Please configure GEMINI_API_KEY._" });
@@ -158,32 +155,26 @@ router.post('/bias-coach', authMiddleware, async (req, res) => {
       rrActual: j.riskRewardActual
     }));
 
-    const prompt = `You are a Trading Psychology Expert specializing in Indian retail traders.
-Analyze the trader's last ${journals.length} journal entries to identify behavioral patterns and cognitive biases (e.g., FOMO, revenge trading, cutting winners early, averaging down losers, over-leveraging in F&O).
+    try { aiService.checkRateLimit(req.user.id); } catch (e) { return res.status(e.status || 429).json({ error: e.message }); }
+    const { text: prompt } = aiService.biasPrompt(journals);
+    const cacheKey = `bias:${req.user.id}:${journals.map(j => j.id).join(',').slice(0, 300)}`;
 
-Journal Data: ${JSON.stringify(journalData)}
-
-Also assign the trader a "Trader Persona" — a named psychological archetype that best describes their overall trading style and psychology. Choose from (or create a fitting one):
-"Momentum Chaser", "Revenge Trader", "Disciplined Executor", "FOMO Trader", "Risk-Averse Hesitator", "Overconfident Scalper", "Loss Aversion Holder", "Systematic Planner", "Emotional Swinger", "Calculated Risk-Taker".
-
-Return the response STRICTLY as a JSON object with the following schema:
-{
-  "persona": "Name of trader persona",
-  "personaDescription": "One sentence describing this persona and its typical failure mode or strength",
-  "biases": ["List of identified biases"],
-  "strengths": ["List of identified strengths"],
-  "recommendations": ["Actionable steps to fix biases and improve performance"]
-}`;
-
-    const model = getModel();
-    const result = await model.generateContent(prompt);
+    let text;
+    try {
+      const r = await aiService.generateText(prompt, { cacheKey });
+      text = r.text;
+    } catch (e) {
+      if (e.message.includes('not configured')) {
+        return res.json({ report: { biases: [], strengths: [], recommendations: ["AI Coach is offline (missing GEMINI_API_KEY)"] } });
+      }
+      throw e;
+    }
     
     // Attempt to parse JSON from Markdown code blocks if any
-    let text = result.response.text();
     text = text.replace(/^```json/m, '').replace(/```$/m, '').trim();
     
     try {
-      const parsed = JSON.parse(text);
+      const parsed = aiService.extractJson(text) || JSON.parse(text);
       res.json({ report: parsed });
     } catch (parseErr) {
       res.json({ report: { persona: 'Unknown', personaDescription: '', biases: [], strengths: [], recommendations: ['Error parsing AI response. Raw output: ' + text] } });

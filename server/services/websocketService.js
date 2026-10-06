@@ -214,4 +214,4 @@ function startHeartbeat() {
   }, HEARTBEAT_MS);
 }
 
-module.exports = { initialize };
+module.exports = { initialize, getIo: () => io };

@@ -1,28 +1,34 @@
-import { TrendingUp, BarChart2, Briefcase, Link, Eye, ClipboardList,
-         Newspaper, Target, LogOut, HelpCircle, Settings, User, Zap, ShieldAlert, FlaskConical } from 'lucide-react';
+import { TrendingUp, BarChart2, Briefcase, Link, ClipboardList,
+         Newspaper, Target, HelpCircle, Settings, Zap, ShieldAlert, FlaskConical,
+         LayoutDashboard, Wallet, BookText, PieChart, ShoppingBasket, Activity } from 'lucide-react';
 
 
 const NAV = [
+  { section: 'TRADE', items: [
+    { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard',     badge: 'KITE' },
+    { id: 'orders',    icon: ClipboardList, label: 'Orders',        badge: null },
+    { id: 'portfolio', icon: Briefcase,     label: 'Holdings',      badge: null },
+    { id: 'positions', icon: Activity,      label: 'Positions',     badge: null },
+    { id: 'funds',     icon: Wallet,        label: 'Funds',         badge: null },
+  ]},
   { section: 'MARKET', items: [
     { id: 'market',    icon: TrendingUp,    label: 'Market',        badge: null },
+    { id: 'options',   icon: Target,        label: 'Option Chain',  badge: null },
     { id: 'screener',  icon: Target,        label: 'Screener',      badge: 'NEW' },
+    { id: 'basket',    icon: ShoppingBasket, label: 'Baskets',      badge: 'NEW' },
     { id: 'news',      icon: Newspaper,     label: 'News & Events', badge: null },
   ]},
-  { section: 'PORTFOLIO', items: [
-    { id: 'portfolio', icon: Briefcase,     label: 'Holdings',      badge: null },
+  { section: 'REPORTS', items: [
+    { id: 'ledger',    icon: BookText,      label: 'Ledger',        badge: null },
+    { id: 'pnl',       icon: PieChart,      label: 'P&L / Tax',     badge: null },
+    { id: 'trade',     icon: Target,        label: 'Trade Desk',    badge: null },
+    { id: 'terminal',  icon: Zap,           label: 'Pro Terminal',  badge: 'LIVE' },
+  ]},
+  { section: 'TOOLS', items: [
     { id: 'risk',      icon: ShieldAlert,   label: 'Risk Advisor',  badge: 'AI' },
-    { id: 'orders',    icon: ClipboardList, label: 'Orders',        badge: null },
-    { id: 'watchlist', icon: Eye,           label: 'Watchlist',     badge: null },
-    { id: 'journal',   icon: BarChart2,      label: 'Trade Journal', badge: 'AI' },
-    { id: 'backtest',  icon: FlaskConical,   label: 'Backtester',    badge: 'AI' },
-  ]},
-  { section: 'TRADING', items: [
-    { id: 'terminal', icon: Zap,           label: 'Pro Terminal',  badge: 'LIVE' },
-    { id: 'trade',    icon: Target,        label: 'Trade (Legacy)', badge: null },
-    { id: 'options',  icon: Target,        label: 'Option Chain', badge: null },
-  ]},
-  { section: 'BLOCKCHAIN', items: [
-    { id: 'blockchain', icon: Link,        label: 'Block Explorer', badge: null },
+    { id: 'journal',   icon: BarChart2,     label: 'Trade Journal', badge: 'AI' },
+    { id: 'backtest',  icon: FlaskConical,  label: 'Backtester',    badge: 'AI' },
+    { id: 'blockchain', icon: Link,         label: 'Block Explorer', badge: null },
   ]},
 ];
 

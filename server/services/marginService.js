@@ -9,33 +9,25 @@
  *   MIS   — Intraday Equity (5x leverage → 20% margin)
  *   NRML  — F&O Overnight (SPAN + Exposure, ~8–15% of contract value)
  *
- * Lot Sizes (NSE effective 2024):
- *   NIFTY=50, BANKNIFTY=15, FINNIFTY=40, MIDCPNIFTY=75, SENSEX=10
+ * Lot Sizes: NSE FAOP/70616 (Jan-2026 series) — NIFTY=65, BANKNIFTY=30,
+ * FINNIFTY=60, MIDCPNIFTY=120, SENSEX=20. Expiry: NSE Tue / BSE Thu (SEBI Sep-2025).
  */
 
 'use strict';
 
-// ─── NSE Lot Sizes ─────────────────────────────────────────────────────────────
-const LOT_SIZES = {
-  NIFTY:       50,
-  BANKNIFTY:   15,
-  FINNIFTY:    40,
-  MIDCPNIFTY:  75,
-  SENSEX:      10,
-  BANKEX:      15,
-  // Default for stock options/futures
-  DEFAULT:     1,
-};
+const { UNDERLYINGS } = require('./foMaster');
 
-// ─── NSE Freeze Quantities (max lots per single order) ────────────────────────
-const FREEZE_QUANTITY_LOTS = {
-  NIFTY:       1800,
-  BANKNIFTY:   900,
-  FINNIFTY:    1800,
-  MIDCPNIFTY:  1200,
-  SENSEX:      2400,
-  DEFAULT:     5000,
-};
+// ─── NSE/BSE Lot Sizes (derived from foMaster — single source of truth) ───────
+const LOT_SIZES = Object.fromEntries(
+  Object.entries(UNDERLYINGS).map(([k, v]) => [k, v.lot])
+);
+LOT_SIZES.DEFAULT = 1;
+
+// ─── Freeze Quantities (max lots per single order, NSE/BSE) ──────────────────
+const FREEZE_QUANTITY_LOTS = Object.fromEntries(
+  Object.entries(UNDERLYINGS).map(([k, v]) => [k, v.freezeLots])
+);
+FREEZE_QUANTITY_LOTS.DEFAULT = 5000;
 
 // ─── SPAN + Exposure Margin Rates (approximate) ───────────────────────────────
 // NSE SPAN is computed in real-time; these are representative static values

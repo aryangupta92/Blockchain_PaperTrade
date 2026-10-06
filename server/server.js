@@ -83,6 +83,7 @@ const aiRoutes           = require('./routes/ai');
 const screenerRoutes     = require('./routes/screener');
 const traderControlRoutes = require('./routes/traderControl');
 const backtestRoutes      = require('./routes/backtest');
+const extensionsRoutes    = require('./routes/extensions');
 
 app.use('/api/market',       marketRoutes);
 app.use('/api/trades',       tradesRoutes);
@@ -98,6 +99,7 @@ app.use('/api/ai',           aiRoutes);
 app.use('/api/screener',     screenerRoutes);
 app.use('/api/trader-control', traderControlRoutes);
 app.use('/api/backtest',      backtestRoutes);
+app.use('/api/ext',           extensionsRoutes); // ADDITIVE broker-parity extensions (session/calendar/ledger/pnl/basket/indicators/drawings)
 
 // ── Legacy endpoints (backward compat) ────────────────────────────────────────
 app.get('/api/health', (req, res) => res.redirect('/api/system/health'));
@@ -118,6 +120,28 @@ app.use((err, req, res, _next) => {
 const server = http.createServer(app);
 const websocketService = require('./services/websocketService');
 websocketService.initialize(server);
+
+// ADDITIVE: GTT/SL trigger daemon (15s poll, single-flight, safe no-op if no pendings)
+try {
+  const gttEngine = require('./services/gttEngine');
+  const ws = require('./services/websocketService');
+  const getIo = () => (typeof ws.getIo === 'function' ? ws.getIo() : null);
+  setInterval(() => {
+    try { gttEngine.checkOnce(getIo()).catch(() => {}); } catch {}
+  }, 15000).unref?.();
+  console.log('   GTT engine:     ✓ (15s trigger poll)');
+  // ADDITIVE: MIS auto square-off check every 60s — fires once at 15:15 IST, cancels pending MIS
+  setInterval(() => {
+    try {
+      const ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+      if (ist.getUTCDay() >= 1 && ist.getUTCDay() <= 5 && ist.getUTCHours() === 15 && ist.getUTCMinutes() === 15) {
+        require('./services/orderService').squareOffIntradayPositions().catch(() => {});
+      }
+    } catch {}
+  }, 60000).unref?.();
+} catch (e) {
+  console.warn('   GTT engine failed to start:', e.message);
+}
 
 server.listen(PORT, async () => {
   console.log(`\n🚀 BlockPaperTrade Platform v2.0`);

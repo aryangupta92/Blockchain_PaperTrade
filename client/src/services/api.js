@@ -83,6 +83,9 @@ const api = {
   /** Cancel a PENDING or OPEN order */
   cancelOrder: (orderId) => apiFetch(`/trades/orders/${orderId}`, { method: 'DELETE' }),
 
+  /** Modify an OPEN/PENDING order (Kite parity: price/qty/trigger/validity) */
+  modifyOrder: (orderId, patch) => apiFetch(`/trades/orders/${orderId}`, { method: 'PUT', body: JSON.stringify(patch) }),
+
   /** Real-time margin preview — called before placing order */
   getMarginPreview: ({ symbol, quantity, price, side, productType }) =>
     apiFetch(`/trades/margin?symbol=${symbol}&quantity=${quantity}&price=${price}&side=${side}&productType=${productType}`),
@@ -153,6 +156,18 @@ const api = {
   // ── Health & SEBI (System) ────────────────────────────────────────────────────
   getHealth:    () => apiFetch('/system/health'),
   getSebiRules: () => apiFetch('/system/sebi'),
+
+  // ── Extensions (ADDITIVE broker-parity, base untouched) ─────────────────────
+  getSession:  () => apiFetch('/ext/session'),
+  getAmo:      () => apiFetch('/ext/amo'),
+  squareOffAll: () => apiFetch('/ext/squareoff', { method: 'POST' }),
+  getCalendar: () => apiFetch('/ext/calendar'),
+  getLedger:   () => apiFetch('/ext/ledger'),
+  getPnlReport: () => apiFetch('/ext/pnl'),
+  placeBasket: (orders) => apiFetch('/ext/basket', { method: 'POST', body: JSON.stringify({ orders }) }),
+  computeIndicators: (candles, studies) => apiFetch('/ext/indicators', { method: 'POST', body: JSON.stringify({ candles, studies }) }),
+  getDrawings: (symbol) => apiFetch(`/ext/drawings?symbol=${encodeURIComponent(symbol)}`),
+  saveDrawings: (symbol, drawings) => apiFetch('/ext/drawings', { method: 'POST', body: JSON.stringify({ symbol, drawings }) }),
 };
 
 export default api;

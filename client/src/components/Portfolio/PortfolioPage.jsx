@@ -1,133 +1,70 @@
-import { useMemo, useState } from 'react';
-import './Portfolio.css';
-import { TrendingUp, TrendingDown, Wallet, BarChart2, Activity, Target, ArrowUpRight, ArrowDownRight, Zap, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Briefcase, RefreshCw, Zap, X } from 'lucide-react';
 import api from '../../services/api';
 import ReactMarkdown from 'react-markdown';
+import '../Broker/Kite.css';
 
-function fmtPrice(n) {
-  if (n === undefined || n === null) return '0.00';
-  const abs = Math.abs(n);
-  if (abs >= 10000000) return (n / 10000000).toFixed(2) + 'Cr';
-  if (abs >= 100000)   return (n / 100000).toFixed(2) + 'L';
-  return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function fmtINR(n) {
+  if (n == null) return '—';
+  return '₹' + Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
-
 function fmtPct(n) {
-  const v = Number(n);
-  if (!Number.isFinite(v)) return '0.00%';
-  return (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+  return `${Number(n) >= 0 ? '+' : ''}${Number(n || 0).toFixed(2)}%`;
 }
 
-// Mini sparkline component (pure CSS bars)
-function Sparkline({ values = [], color }) {
-  if (!values.length) return null;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  return (
-    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 32, width: 80 }}>
-      {values.map((v, i) => (
-        <div
-          key={i}
-          style={{
-            flex: 1,
-            height: `${Math.max(10, ((v - min) / range) * 100)}%`,
-            background: color,
-            borderRadius: 2,
-            opacity: 0.7 + (i / values.length) * 0.3,
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
-// Radial donut segment component
-function DonutChart({ segments }) {
-  const total = segments.reduce((s, seg) => s + Math.abs(seg.value), 0);
-  if (!total) return null;
-
-  let cumulative = 0;
-  const radius = 54;
-  const circumference = 2 * Math.PI * radius;
-
-  return (
-    <svg viewBox="0 0 140 140" style={{ width: 140, height: 140, transform: 'rotate(-90deg)' }}>
-      <circle cx="70" cy="70" r={radius} fill="none" stroke="var(--bg-surface)" strokeWidth="16" />
-      {segments.map((seg, i) => {
-        const pct = Math.abs(seg.value) / total;
-        const dashArray = `${pct * circumference} ${circumference}`;
-        const dashOffset = -cumulative * circumference;
-        cumulative += pct;
-        return (
-          <circle
-            key={i}
-            cx="70" cy="70" r={radius}
-            fill="none"
-            stroke={seg.color}
-            strokeWidth="16"
-            strokeDasharray={dashArray}
-            strokeDashoffset={dashOffset}
-            style={{ transition: 'stroke-dasharray 0.5s ease' }}
-          />
-        );
-      })}
-    </svg>
-  );
-}
-
-const POSITION_COLORS = [
-  '#6366f1','#10b981','#f59e0b','#3b82f6','#ec4899',
-  '#8b5cf6','#14b8a6','#f97316','#06b6d4','#84cc16',
-];
-
+// Kite Holdings: Instrument | Qty | Avg cost | LTP | Invested | Current | P&L | Net chg | Day chg
+// T+1 settlement note, Day P&L split, live LTP from quotes with server fallback
 export default function PortfolioPage({ holdings, quotes, balance, initialBalance, onTrade }) {
-  const positions = Object.entries(holdings).filter(([, h]) => h.quantity !== 0);
-  const canTrade = typeof onTrade === 'function';
-
-  const stats = useMemo(() => {
-    const totalInvested = positions.reduce((sum, [, h]) => sum + Math.abs(h.quantity) * h.avgPrice, 0);
-    const currentValue = positions.reduce((sum, [symbol, h]) => {
-      const ltp = quotes[symbol]?.price || h.avgPrice;
-      return sum + h.quantity * ltp;
-    }, 0);
-    const totalPL = positions.reduce((sum, [symbol, h]) => {
-      const ltp = quotes[symbol]?.price || h.avgPrice;
-      const qty = h.quantity;
-      const pl = qty >= 0 ? (ltp - h.avgPrice) * qty : (h.avgPrice - ltp) * Math.abs(qty);
-      return sum + pl;
-    }, 0);
-    const totalPLPct = totalInvested > 0 ? (totalPL / totalInvested) * 100 : 0;
-    const portfolioValue = balance + Math.max(0, currentValue);
-    const overallReturn = portfolioValue - initialBalance;
-    const overallReturnPct = initialBalance > 0 ? (overallReturn / initialBalance) * 100 : 0;
-    const winPositions = positions.filter(([symbol, h]) => {
-      const ltp = quotes[symbol]?.price || h.avgPrice;
-      const qty = h.quantity;
-      return qty >= 0 ? ltp > h.avgPrice : ltp < h.avgPrice;
-    });
-    const winRate = positions.length > 0 ? (winPositions.length / positions.length) * 100 : 0;
-
-    return { totalInvested, currentValue, totalPL, totalPLPct, portfolioValue, overallReturn, overallReturnPct, winRate };
-  }, [holdings, quotes, balance, initialBalance, positions]);
-
-  const donutSegments = positions.slice(0, 10).map(([symbol, h], i) => {
-    const ltp = quotes[symbol]?.price || h.avgPrice;
-    const value = Math.abs(h.quantity) * ltp;
-    return { symbol, value, color: POSITION_COLORS[i % POSITION_COLORS.length] };
-  });
-
+  const [server, setServer] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [aiInsight, setAiInsight] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [showAiModal, setShowAiModal] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const s = await api.getPortfolioSummary().catch(() => null);
+      setServer(s);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const rows = (server?.holdings?.length ? server.holdings : Object.entries(holdings || {}).map(([tradingSymbol, h]) => {
+    const sym = tradingSymbol.replace('.NS', '').replace('.BO', '');
+    const ltp = quotes[sym]?.price ?? quotes[tradingSymbol]?.price ?? h.avgPrice;
+    return {
+      tradingSymbol, symbol: sym, quantity: h.quantity, avgPrice: h.avgPrice, ltp,
+      investedValue: Math.abs(h.quantity) * h.avgPrice,
+      currentValue: h.quantity * ltp,
+      unrealizedPL: (ltp - h.avgPrice) * h.quantity,
+      dayPL: h.quantity * (quotes[sym]?.change ?? 0),
+      dayChangePct: quotes[sym]?.changePercent ?? 0,
+      exchange: 'NSE',
+    };
+  })).map(h => {
+    const sym = (h.symbol || h.tradingSymbol || '').replace('.NS', '').replace('.BO', '');
+    const liveLtp = quotes[sym]?.price ?? quotes[h.tradingSymbol]?.price ?? h.ltp;
+    const upl = (liveLtp - h.avgPrice) * h.quantity;
+    return { ...h, sym, ltp: liveLtp, unrealizedPL: upl };
+  });
+
+  const totalInvested = rows.reduce((s, h) => s + (h.investedValue || Math.abs(h.quantity) * h.avgPrice || 0), 0);
+  const totalCurrent = rows.reduce((s, h) => s + (h.currentValue || h.quantity * h.ltp || 0), 0);
+  const totalPL = rows.reduce((s, h) => s + (h.unrealizedPL || 0), 0);
+  const dayPL = rows.reduce((s, h) => s + (h.dayPL || h.quantity * (quotes[h.sym]?.change ?? 0) || 0), 0);
+  const cash = server?.cash ?? balance ?? 0;
+  const portfolioValue = cash + Math.max(0, totalCurrent);
 
   const fetchAiInsight = async () => {
     setShowAiModal(true);
     setAiLoading(true);
     try {
-      const res = await api.getAIPortfolioRisk(); // Reusing the same endpoint, it's robust
+      const res = await api.getAIPortfolioRisk();
       setAiInsight(res.report);
-    } catch (e) {
+    } catch {
       setAiInsight('Failed to fetch AI insights. Please check API keys.');
     } finally {
       setAiLoading(false);
@@ -135,264 +72,104 @@ export default function PortfolioPage({ holdings, quotes, balance, initialBalanc
   };
 
   return (
-    <div className="portfolio-page">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <h2 style={{ fontSize: 20, fontWeight: 800 }}>My Portfolio</h2>
-        <button className="btn-gain" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', borderRadius: 8, fontSize: 13 }} onClick={fetchAiInsight}>
-          <Zap size={14} /> AI Insights
-        </button>
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+        <h2 style={{ fontSize: 17, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Briefcase size={17} style={{ color: 'var(--accent-primary)' }} />
+          Holdings <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>CNC delivery · T+1 settlement · {rows.length} stock(s)</span>
+        </h2>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={load} disabled={loading}>
+            <RefreshCw size={13} /> Refresh
+          </button>
+          <button className="btn-gain" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 8, fontSize: 12 }} onClick={fetchAiInsight}>
+            <Zap size={13} /> AI Insights
+          </button>
+        </div>
       </div>
 
       {showAiModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div className="card" style={{ width: '90%', maxWidth: 600, maxHeight: '80vh', overflowY: 'auto', position: 'relative' }}>
-            <button onClick={() => setShowAiModal(false)} style={{ position: 'absolute', top: 16, right: 16, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={20}/></button>
-            <h3 style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--accent-primary)', marginBottom: 16 }}><Zap size={18}/> AI Portfolio Insights</h3>
-            {aiLoading ? (
-              <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>Analyzing portfolio distribution and generating insights...</div>
-            ) : (
-              <div style={{ fontSize: 13, lineHeight: 1.6, color: 'var(--text-primary)' }}>
-                <ReactMarkdown>{aiInsight}</ReactMarkdown>
-              </div>
-            )}
+            <button onClick={() => setShowAiModal(false)} style={{ position: 'absolute', top: 14, right: 14, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={18} /></button>
+            <h3 style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--accent-primary)', marginBottom: 14 }}><Zap size={16} /> AI Portfolio Insights</h3>
+            {aiLoading ? <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Analyzing holdings…</div>
+              : <div style={{ fontSize: 13, lineHeight: 1.6 }}><ReactMarkdown>{aiInsight}</ReactMarkdown></div>}
           </div>
         </div>
       )}
 
-      {/* ── KPI Summary Row ─────────────────────────────────────────────────── */}
-      <div className="portfolio-kpi-row">
-        <div className="card pf-kpi-card">
-          <div className="pf-kpi-icon" style={{ background: 'rgba(99,102,241,0.15)' }}>
-            <Wallet size={16} style={{ color: '#6366f1' }} />
-          </div>
-          <div>
-            <div className="pf-kpi-label">Portfolio Value</div>
-            <div className="pf-kpi-value">₹{fmtPrice(stats.portfolioValue)}</div>
-            <div className={`pf-kpi-sub ${stats.overallReturn >= 0 ? 'gain' : 'loss'}`}>
-              {stats.overallReturn >= 0 ? <ArrowUpRight size={11} /> : <ArrowDownRight size={11} />}
-              {fmtPct(stats.overallReturnPct)} overall
-            </div>
-          </div>
-        </div>
-
-        <div className="card pf-kpi-card">
-          <div className="pf-kpi-icon" style={{ background: 'rgba(16,185,129,0.15)' }}>
-            <Wallet size={16} style={{ color: '#10b981' }} />
-          </div>
-          <div>
-            <div className="pf-kpi-label">Cash Balance</div>
-            <div className="pf-kpi-value gain">₹{fmtPrice(balance)}</div>
-            <div className="pf-kpi-sub">Available to deploy</div>
-          </div>
-        </div>
-
-        <div className="card pf-kpi-card">
-          <div className="pf-kpi-icon" style={{ background: 'rgba(245,158,11,0.15)' }}>
-            <BarChart2 size={16} style={{ color: '#f59e0b' }} />
-          </div>
-          <div>
-            <div className="pf-kpi-label">Invested</div>
-            <div className="pf-kpi-value">₹{fmtPrice(stats.totalInvested)}</div>
-            <div className="pf-kpi-sub">{positions.length} open position{positions.length !== 1 ? 's' : ''}</div>
-          </div>
-        </div>
-
-        <div className="card pf-kpi-card">
-          <div className="pf-kpi-icon" style={{ background: stats.totalPL >= 0 ? 'rgba(16,185,129,0.15)' : 'rgba(244,63,94,0.15)' }}>
-            {stats.totalPL >= 0 ? <TrendingUp size={16} style={{ color: '#10b981' }} /> : <TrendingDown size={16} style={{ color: '#f43f5e' }} />}
-          </div>
-          <div>
-            <div className="pf-kpi-label">Unrealized P&amp;L</div>
-            <div className={`pf-kpi-value ${stats.totalPL >= 0 ? 'gain' : 'loss'}`}>
-              {stats.totalPL >= 0 ? '+' : '-'}₹{fmtPrice(Math.abs(stats.totalPL))}
-            </div>
-            <div className={`pf-kpi-sub ${stats.totalPLPct >= 0 ? 'gain' : 'loss'}`}>
-              {fmtPct(stats.totalPLPct)} on invested
-            </div>
-          </div>
-        </div>
-
-        <div className="card pf-kpi-card">
-          <div className="pf-kpi-icon" style={{ background: 'rgba(59,130,246,0.15)' }}>
-            <Target size={16} style={{ color: '#3b82f6' }} />
-          </div>
-          <div>
-            <div className="pf-kpi-label">Win Rate</div>
-            <div className="pf-kpi-value" style={{ color: stats.winRate >= 50 ? '#10b981' : '#f43f5e' }}>
-              {stats.winRate.toFixed(0)}%
-            </div>
-            <div className="pf-kpi-sub">{positions.filter(([s, h]) => { const ltp = quotes[s]?.price || h.avgPrice; return h.quantity >= 0 ? ltp > h.avgPrice : ltp < h.avgPrice; }).length} / {positions.length} winning</div>
-          </div>
-        </div>
+      <div className="kite-funds-grid">
+        <div className="kite-fund-card"><div className="lbl">Total investment</div><div className="val">{fmtINR(totalInvested)}</div></div>
+        <div className="kite-fund-card"><div className="lbl">Current value</div><div className="val">{fmtINR(totalCurrent)}</div><div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Cash {fmtINR(cash)} · Total {fmtINR(portfolioValue)}</div></div>
+        <div className="kite-fund-card"><div className="lbl">Day's P&L</div><div className="val" style={{ color: dayPL >= 0 ? 'var(--gain)' : 'var(--loss)' }}>{dayPL >= 0 ? '+' : ''}{fmtINR(dayPL)}</div></div>
+        <div className="kite-fund-card"><div className="lbl">Total P&L</div><div className="val" style={{ color: totalPL >= 0 ? 'var(--gain)' : 'var(--loss)' }}>{totalPL >= 0 ? '+' : ''}{fmtINR(totalPL)}</div><div style={{ fontSize: 11, color: totalPL >= 0 ? 'var(--gain)' : 'var(--loss)' }}>{fmtPct(totalInvested ? (totalPL / totalInvested) * 100 : 0)}</div></div>
       </div>
 
-      {/* ── Main Content ───────────────────────────────────────────────────── */}
-      <div className="portfolio-main-row">
-        {/* Left: Holdings Table */}
-        <div className="card" style={{ flex: '1 1 65%', minWidth: 0 }}>
-          <div className="section-header" style={{ marginBottom: 12 }}>
-            <Activity size={15} style={{ color: 'var(--accent-primary)' }} />
-            <span className="section-title">Open Positions</span>
-            <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>
-              {positions.length} positions
-            </span>
+      <div className="card">
+        {loading && rows.length === 0 ? (
+          <div style={{ padding: 30, textAlign: 'center' }}><div className="spinner" /></div>
+        ) : rows.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '44px 0', color: 'var(--text-muted)' }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-secondary)' }}>No holdings</div>
+            <div style={{ fontSize: 12, marginTop: 4 }}>CNC buys appear here after T+1. MIS intraday stays in Positions and auto-squares at 15:15.</div>
           </div>
-
-          {positions.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '50px 0', color: 'var(--text-muted)' }}>
-              <BarChart2 size={36} style={{ marginBottom: 12, opacity: 0.2 }} />
-              <div style={{ fontSize: 14, fontWeight: 600 }}>No Open Positions</div>
-              <div style={{ fontSize: 12, marginTop: 4 }}>Place a trade to start building your portfolio</div>
-            </div>
-          ) : (
-            <div className="scroll-x">
-              <table className="data-table holdings-table">
-                <thead>
-                  <tr>
-                    <th>Symbol</th>
-                    <th style={{ textAlign: 'right' }}>Qty</th>
-                    <th style={{ textAlign: 'right' }}>Avg Cost</th>
-                    <th style={{ textAlign: 'right' }}>LTP</th>
-                    <th style={{ textAlign: 'right' }}>Invested</th>
-                    <th style={{ textAlign: 'right' }}>Mkt Value</th>
-                    <th style={{ textAlign: 'right' }}>P&amp;L</th>
-                    <th style={{ textAlign: 'right' }}>% Chg</th>
-                    <th style={{ textAlign: 'right' }}>Trend</th>
-                    <th style={{ textAlign: 'right' }}>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {positions.map(([symbol, h], i) => {
-                    const ltp = quotes[symbol]?.price || h.avgPrice;
-                    const qty = h.quantity;
-                    const invested = Math.abs(qty) * h.avgPrice;
-                    const curValue = qty * ltp;
-                    const pl = qty >= 0 ? (ltp - h.avgPrice) * qty : (h.avgPrice - ltp) * Math.abs(qty);
-                    const plPct = invested > 0 ? (pl / invested) * 100 : 0;
-                    const isGain = pl >= 0;
-                    const isShort = qty < 0;
-                    const dayChg = quotes[symbol]?.changePercent || 0;
-                    const color = POSITION_COLORS[i % POSITION_COLORS.length];
-
-                    // Generate mock sparkline values from price data
-                    const basePrice = h.avgPrice;
-                    const sparkValues = [basePrice, basePrice * 1.01, basePrice * 0.99, basePrice * 1.015, basePrice * 1.008, ltp * 0.99, ltp];
-
-                    return (
-                      <tr key={symbol}>
-                        <td>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <div style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
-                            <div>
-                              <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 13 }}>{symbol}</div>
-                              <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-                                {h.type === 'OPTION' && <span style={{ fontSize: 9, padding: '2px 6px', background: 'rgba(99,102,241,0.15)', color: '#6366f1', borderRadius: 4, fontWeight: 700 }}>OPTION</span>}
-                                {h.type === 'FUTURE' && <span style={{ fontSize: 9, padding: '2px 6px', background: 'rgba(245,158,11,0.15)', color: '#f59e0b', borderRadius: 4, fontWeight: 700 }}>FUTURE</span>}
-                                {h.type === 'EQUITY' && <span style={{ fontSize: 9, padding: '2px 6px', background: 'rgba(16,185,129,0.15)', color: '#10b981', borderRadius: 4, fontWeight: 700 }}>EQUITY</span>}
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-                        <td style={{ textAlign: 'right', fontWeight: 700, color: isShort ? 'var(--loss)' : 'var(--text-primary)' }}>
-                          {isShort ? `${Math.abs(qty)} ↓` : qty}
-                        </td>
-                        <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12 }}>₹{fmtPrice(h.avgPrice)}</td>
-                        <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: dayChg >= 0 ? 'var(--gain)' : 'var(--loss)' }}>
-                          ₹{fmtPrice(ltp)}
-                          <div style={{ fontSize: 10, fontWeight: 500, color: dayChg >= 0 ? 'var(--gain)' : 'var(--loss)' }}>
-                            {fmtPct(dayChg)} today
-                          </div>
-                        </td>
-                        <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12 }}>₹{fmtPrice(invested)}</td>
-                        <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12 }}>₹{fmtPrice(Math.abs(curValue))}</td>
-                        <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 700, color: isGain ? 'var(--gain)' : 'var(--loss)' }}>
-                          {isGain ? '+' : '-'}₹{fmtPrice(Math.abs(pl))}
-                        </td>
-                        <td style={{ textAlign: 'right' }}>
-                          <span className={`mover-change-pill ${isGain ? 'gain' : 'loss'}`} style={{ fontSize: 11 }}>
-                            {fmtPct(plPct)}
-                          </span>
-                        </td>
-                        <td style={{ textAlign: 'right' }}>
-                          <Sparkline values={sparkValues} color={isGain ? '#10b981' : '#f43f5e'} />
-                        </td>
-                        <td style={{ textAlign: 'right' }}>
-                          <button
-                            className={isShort ? 'btn-gain' : 'btn-loss'}
-                            style={{ padding: '5px 10px', fontSize: 11, borderRadius: 8, width: 'auto' }}
-                            onClick={() => canTrade && onTrade({ type: isShort ? 'buy' : 'sell', symbol, quantity: Math.abs(qty), price: ltp, orderType: 'market' })}
-                            title={isShort ? 'Buy to cover' : 'Square off'}
-                          >
-                            {isShort ? '↑ COVER' : '↓ EXIT'}
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-
-        {/* Right: Allocation Donut + Stats */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, flex: '0 0 260px' }}>
-          {/* Allocation Donut */}
-          <div className="card" style={{ textAlign: 'center' }}>
-            <div className="section-title" style={{ marginBottom: 12 }}>Allocation</div>
-            {positions.length === 0 ? (
-              <div style={{ color: 'var(--text-muted)', fontSize: 12, padding: '20px 0' }}>No positions</div>
-            ) : (
-              <>
-                <div style={{ display: 'flex', justifyContent: 'center', position: 'relative' }}>
-                  <DonutChart segments={donutSegments} />
-                  <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', textAlign: 'center' }}>
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Positions</div>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--text-primary)' }}>{positions.length}</div>
-                  </div>
-                </div>
-                <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {donutSegments.map(seg => (
-                    <div key={seg.symbol} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <div style={{ width: 8, height: 8, borderRadius: 2, background: seg.color, flexShrink: 0 }} />
-                        <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>{seg.symbol}</span>
-                      </div>
-                      <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-                        {((seg.value / donutSegments.reduce((s, x) => s + x.value, 0)) * 100).toFixed(1)}%
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
+        ) : (
+          <div className="scroll-x">
+            <table className="kite-table">
+              <thead>
+                <tr>
+                  <th>Instrument</th>
+                  <th style={{ textAlign: 'right' }}>Qty</th>
+                  <th style={{ textAlign: 'right' }}>Avg cost</th>
+                  <th style={{ textAlign: 'right' }}>LTP</th>
+                  <th style={{ textAlign: 'right' }}>Invested</th>
+                  <th style={{ textAlign: 'right' }}>Current</th>
+                  <th style={{ textAlign: 'right' }}>P&L</th>
+                  <th style={{ textAlign: 'right' }}>Net chg</th>
+                  <th style={{ textAlign: 'right' }}>Day chg</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(h => {
+                  const gain = (h.unrealizedPL ?? 0) >= 0;
+                  const invested = h.investedValue ?? Math.abs(h.quantity) * h.avgPrice;
+                  const cur = h.currentValue ?? h.quantity * h.ltp;
+                  const netPct = invested ? ((h.unrealizedPL ?? 0) / invested) * 100 : 0;
+                  const dayPct = h.dayChangePct ?? quotes[h.sym]?.changePercent ?? 0;
+                  const isShort = h.quantity < 0;
+                  return (
+                    <tr key={h.tradingSymbol || h.sym}>
+                      <td style={{ fontWeight: 800 }}>{h.sym}
+                        <div style={{ marginTop: 3 }}><span className="kite-chip cnc">CNC</span> <span className="kite-exch">{h.exchange || 'NSE'}</span></div>
+                      </td>
+                      <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{h.quantity}</td>
+                      <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtINR(h.avgPrice)}</td>
+                      <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 700, color: (dayPct ?? 0) >= 0 ? 'var(--gain)' : 'var(--loss)' }}>{fmtINR(h.ltp)}</td>
+                      <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtINR(invested)}</td>
+                      <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtINR(Math.abs(cur))}</td>
+                      <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 800, color: gain ? 'var(--gain)' : 'var(--loss)' }}>
+                        {gain ? '+' : ''}{fmtINR(h.unrealizedPL)}
+                      </td>
+                      <td style={{ textAlign: 'right' }}><span className={`kite-chip ${gain ? 'filled' : 'rejected'}`}>{fmtPct(netPct)}</span></td>
+                      <td style={{ textAlign: 'right', fontSize: 11.5, fontWeight: 700, color: (dayPct ?? 0) >= 0 ? 'var(--gain)' : 'var(--loss)' }}>{fmtPct(dayPct)}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <button
+                          className="kite-action-link danger"
+                          onClick={() => onTrade?.({ type: isShort ? 'buy' : 'sell', symbol: h.sym, quantity: Math.abs(h.quantity), price: h.ltp, orderType: 'market', productType: 'CNC' })}
+                        >EXIT</button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-
-          {/* P&L Progress Bar Card */}
-          <div className="card">
-            <div className="section-title" style={{ marginBottom: 12 }}>Capital Utilization</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {[
-                { label: 'Deployed', value: stats.totalInvested, total: initialBalance, color: '#6366f1' },
-                { label: 'Cash', value: balance, total: initialBalance, color: '#10b981' },
-                { label: 'P&L', value: Math.abs(stats.totalPL), total: stats.totalInvested || 1, color: stats.totalPL >= 0 ? '#10b981' : '#f43f5e' },
-              ].map(({ label, value, total, color }) => {
-                const pct = Math.min(100, Math.max(0, (value / total) * 100));
-                return (
-                  <div key={label}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}>
-                      <span style={{ color: 'var(--text-muted)' }}>{label}</span>
-                      <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>₹{fmtPrice(value)}</span>
-                    </div>
-                    <div style={{ height: 5, background: 'var(--bg-surface)', borderRadius: 99, overflow: 'hidden' }}>
-                      <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 99, transition: 'width 0.6s ease' }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
+        )}
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
+        Holdings show CNC delivery only (T+1). Intraday MIS lives in Positions with 15:15 IST auto square-off — exactly like Zerodha/Upstox.
       </div>
     </div>
   );

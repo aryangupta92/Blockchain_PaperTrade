@@ -12,7 +12,12 @@
 
 import { useState, useEffect } from 'react';
 import './Trading.css';
+import '../Broker/Kite.css';
 import OrderTicket from './OrderTicket';
+import QuoteHeader from '../Broker/QuoteHeader';
+import MarketDepth from '../Broker/MarketDepth';
+import SessionBanner from '../Broker/SessionBanner';
+import AdvancedChart from '../Chart/AdvancedChart';
 import { Zap, TrendingUp, TrendingDown, BarChart2, RefreshCw, ChevronRight, AlertCircle } from 'lucide-react';
 import api from '../../services/api';
 
@@ -24,8 +29,9 @@ function fmtPct(n) {
   return (n >= 0 ? '+' : '') + Number(n).toFixed(2) + '%';
 }
 
-export default function TradePage({ quotes, holdings, balance, onTrade, watchlist, onAddWatch }) {
+export default function TradePage({ quotes, holdings, balance, onTrade, watchlist, onAddWatch, marketDepth }) {
   const [selectedSymbol, setSelectedSymbol]   = useState(watchlist?.[0] || 'RELIANCE');
+  const [exchange, setExchange]               = useState('NSE');
   const [ticketOpen, setTicketOpen]           = useState(false);
   const [ticketSide, setTicketSide]           = useState('buy');
   const [ticketSegment, setTicketSegment]     = useState('EQ');
@@ -86,7 +92,20 @@ export default function TradePage({ quotes, holdings, balance, onTrade, watchlis
     t.instrument?.tradingSymbol === selectedSymbol
   ).slice(0, 6);
 
+  const depth = marketDepth?.[selectedSymbol] || null;
+
   return (
+    <div>
+      <SessionBanner />
+      <QuoteHeader
+        symbol={selectedSymbol}
+        quote={liveQuote}
+        exchange={exchange}
+        onExchangeChange={setExchange}
+        onBuy={() => openTicket('buy', 'EQ')}
+        onSell={() => openTicket('sell', 'EQ')}
+      />
+      <div style={{ height: 12 }} />
     <div className="trade-page">
       {/* ── Left Panel: Order Actions ───────────────────────────────────────────── */}
       <div className="card trade-panel">
@@ -208,67 +227,15 @@ export default function TradePage({ quotes, holdings, balance, onTrade, watchlis
         </div>
       </div>
 
-      {/* ── Right Panel: Chart + Positions + History ────────────────────────────── */}
+      {/* ── Right Panel: Chart + Depth + Positions + History ─────────────────── */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16, flex: 1, minWidth: 0 }}>
-        {/* Chart */}
-        <div className="card chart-container" style={{ minHeight: 280 }}>
-          <div className="section-header">
-            <BarChart2 size={16} style={{ color: 'var(--accent-primary)' }} />
-            <span className="section-title">{selectedSymbol} — 1D Chart</span>
-            {liveQuote && (
-              <span className={liveQuote.changePercent >= 0 ? 'gain' : 'loss'} style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700 }}>
-                {fmtINR(livePrice)} {fmtPct(liveQuote.changePercent)}
-              </span>
-            )}
-          </div>
-          {loadingChart ? (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 200 }}>
-              <div className="spinner" style={{ width: 20, height: 20, borderWidth: 2 }} />
-            </div>
-          ) : chartData.length > 0 ? (
-            <div style={{ height: 220, position: 'relative', padding: '0 8px' }}>
-              <div style={{ display: 'flex', alignItems: 'flex-end', height: '100%', gap: 1 }}>
-                {(() => {
-                  const data = chartData.slice(-80);
-                  const high = Math.max(...data.map(c => c.high));
-                  const low  = Math.min(...data.map(c => c.low));
-                  const rng  = high - low || 1;
-                  return data.map((c, i) => {
-                    const bodyH = Math.abs(c.close - c.open) / rng * 210 || 2;
-                    const bodyB = (Math.min(c.open, c.close) - low) / rng * 210;
-                    const isUp  = c.close >= c.open;
-                    const col   = isUp ? 'var(--gain)' : 'var(--loss)';
-                    return (
-                      <div key={i} style={{ flex: 1, position: 'relative', height: '100%', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-                        <div style={{ position: 'absolute', bottom: `${(c.low - low) / rng * 210}px`, width: 1, height: `${(c.high - c.low) / rng * 210}px`, background: col, opacity: 0.5 }} />
-                        <div style={{ width: '60%', height: `${bodyH}px`, background: col, borderRadius: 1, marginBottom: `${bodyB}px` }} />
-                      </div>
-                    );
-                  });
-                })()}
-                {/* Entry price line */}
-                {heldQty !== 0 && (() => {
-                  const data = chartData.slice(-80);
-                  const high = Math.max(...data.map(c => c.high));
-                  const low  = Math.min(...data.map(c => c.low));
-                  const rng  = high - low || 1;
-                  const pct  = Math.max(0, Math.min(210, ((avgPrice - low) / rng) * 210));
-                  return (
-                    <div style={{ position: 'absolute', left: 8, right: 8, bottom: `${pct + 8}px`, borderTop: `1.5px dashed ${pnlPct >= 0 ? 'var(--gain)' : 'var(--loss)'}`, pointerEvents: 'none', zIndex: 5 }}>
-                      <div style={{ position: 'absolute', right: 4, top: -18, background: pnlPct >= 0 ? 'var(--gain)' : 'var(--loss)', color: '#000', fontSize: 9, fontWeight: 800, padding: '2px 5px', borderRadius: 4, fontFamily: 'var(--font-mono)' }}>
-                        Avg: {fmtINR(avgPrice)} · {fmtPct(pnlPct)}
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
-            </div>
-          ) : (
-            <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
-              No chart data available for {selectedSymbol}
-            </div>
-          )}
+        {/* Pro chart (TradingView-style candles, live LTP line, volume, SMA) */}
+        <div className="card chart-container" style={{ minHeight: 440, padding: 0, overflow: 'hidden' }}>
+          <AdvancedChart symbol={selectedSymbol} quote={liveQuote} />
         </div>
+
+        {/* Market depth (5-level bid/ask like real brokers) */}
+        <MarketDepth symbol={selectedSymbol} depth={depth} ltp={livePrice} />
 
         {/* All Positions */}
         {allHoldings.length > 0 && (
@@ -356,7 +323,7 @@ export default function TradePage({ quotes, holdings, balance, onTrade, watchlis
         </div>
       </div>
 
-      {/* Universal Order Ticket Modal */}
+      {/* Kite-docked Order Ticket */}
       <OrderTicket
         isOpen={ticketOpen}
         onClose={() => setTicketOpen(false)}
@@ -365,10 +332,12 @@ export default function TradePage({ quotes, holdings, balance, onTrade, watchlis
         initialSide={ticketSide}
         initialSegment={ticketSegment}
         initialPrice={ticketInitPrice}
+        initialExchange={exchange}
         quotes={quotes}
         holdings={holdings}
         balance={balance}
       />
+    </div>
     </div>
   );
 }

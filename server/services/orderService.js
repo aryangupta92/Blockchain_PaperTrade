@@ -476,6 +476,67 @@ async function cancelOrder(orderId, userId, ctx = {}) {
 }
 
 /**
+ * Modify an OPEN / PENDING / TRIGGER_PENDING order (Kite parity: price, qty, trigger, validity, disclosed qty).
+ * Filled / Cancelled / Rejected orders cannot be modified.
+ */
+async function modifyOrder(orderId, userId, patch = {}, ctx = {}) {
+  const order = await prisma.order.findUnique({ where: { id: orderId }, include: { instrument: true } });
+  if (!order) throw new Error('Order not found');
+  if (order.userId !== userId) throw new Error('Unauthorized');
+  if (!['PENDING', 'OPEN', 'TRIGGER_PENDING'].includes(order.status)) {
+    throw new Error(`Cannot modify order in ${order.status} state`);
+  }
+  const data = {};
+  if (patch.price !== undefined && patch.price !== null && patch.price !== '') {
+    const px = Number(patch.price);
+    if (!Number.isFinite(px) || px <= 0) throw new Error('Invalid price');
+    data.price = px;
+  }
+  if (patch.quantity !== undefined && patch.quantity !== null && patch.quantity !== '') {
+    const qty = Number(patch.quantity);
+    if (!Number.isFinite(qty) || qty <= 0) throw new Error('Invalid quantity');
+    data.quantity = qty;
+  }
+  if (patch.triggerPrice !== undefined) {
+    data.triggerPrice = patch.triggerPrice === null || patch.triggerPrice === '' ? null : Number(patch.triggerPrice);
+  }
+  if (patch.validity) {
+    const v = String(patch.validity).toUpperCase();
+    if (!['DAY', 'IOC'].includes(v)) throw new Error('Validity must be DAY or IOC');
+    data.validity = v;
+  }
+  if (patch.disclosedQuantity !== undefined) {
+    data.disclosedQuantity = patch.disclosedQuantity === null || patch.disclosedQuantity === '' ? null : Number(patch.disclosedQuantity);
+  }
+  if (patch.orderType) {
+    const t = String(patch.orderType).toUpperCase();
+    if (!['MARKET', 'LIMIT', 'SL', 'SL-M', 'GTT', 'IOC'].includes(t)) throw new Error('Invalid order type');
+    data.orderType = t;
+    // keep status consistent: SL/SL-M/GTT need a trigger
+    if (['SL', 'SL-M', 'GTT'].includes(t) || data.triggerPrice) data.status = 'TRIGGER_PENDING';
+    else if (order.orderType === 'LIMIT' || t === 'LIMIT') data.status = 'OPEN';
+  }
+  if (Object.keys(data).length === 0) throw new Error('Nothing to modify');
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const o = await tx.order.update({ where: { id: orderId }, data });
+    await createOrderEvent(tx, orderId, o.status, `Order modified${data.price ? ` — price ₹${data.price}` : ''}${data.quantity ? ` — qty ${data.quantity}` : ''}`, { patch: data });
+    return o;
+  });
+
+  await auditLogger.log({
+    userId,
+    action: auditLogger.ACTIONS.ORDER_CREATED,
+    entity: 'Order',
+    entityId: orderId,
+    ...ctx,
+    metadata: { modify: true, patch: data, symbol: order.instrument?.tradingSymbol },
+  });
+
+  return updated;
+}
+
+/**
  * Auto Square-Off for INTRADAY (MIS) orders/positions.
  * Called by cron at 15:15 IST.
  */
@@ -503,4 +564,4 @@ async function squareOffIntradayPositions() {
   console.log('[OMS] INTRADAY Auto Square-Off complete.');
 }
 
-module.exports = { placeOrder, cancelOrder, squareOffIntradayPositions, setIo };
+module.exports = { placeOrder, cancelOrder, modifyOrder, squareOffIntradayPositions, setIo };

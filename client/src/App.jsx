@@ -14,7 +14,6 @@ import MarketPage        from './components/Market/MarketPage';
 import TradePage         from './components/Trading/TradePage';
 import PortfolioPage     from './components/Portfolio/PortfolioPage';
 import BlockchainExplorer from './components/Blockchain/BlockchainExplorer';
-import WatchlistPage     from './components/Watchlist/WatchlistPage';
 import OrdersPage        from './components/Orders/OrdersPage';
 import NewsPage          from './components/News/NewsPage';
 import OptionChainPage   from './components/OptionChain/OptionChainPage';
@@ -23,6 +22,12 @@ import JournalPage       from './components/Journal/JournalPage';
 import TerminalPage      from './components/Terminal/TerminalPage';
 import RiskAdvisorPage   from './components/RiskAdvisor/RiskAdvisorPage';
 import BacktestPage      from './components/Backtest/BacktestPage';
+// Broker-parity pages (Kite/Upstox/Dhan layout)
+import DashboardPage     from './components/Broker/DashboardPage';
+import FundsPage         from './components/Broker/FundsPage';
+import PositionsBook     from './components/Broker/PositionsBook';
+import SessionBanner     from './components/Broker/SessionBanner';
+import { LedgerPage, PnlPage, BasketPage } from './components/Broker/ReportsPage';
 
 // Full-screen chart
 import ChartPage         from './components/Chart/ChartPage';
@@ -59,7 +64,7 @@ export default function App() {
   const [watchlist, setWatchlist] = useState(() => LOAD('bt_watchlist', WATCHED_DEFAULT));
 
   // ── Navigation ────────────────────────────────────────────────────────────────
-  const [activePage, setActivePage] = useState('market');
+  const [activePage, setActivePage] = useState('dashboard'); // Kite parity: Dashboard is home
   const [chartTarget, setChartTarget] = useState(null); // { symbol, symbolData } — opens full-screen chart
 
   // ── Toast ─────────────────────────────────────────────────────────────────────
@@ -93,6 +98,51 @@ export default function App() {
   // ── Market data WebSockets + OMS Fill Notifications ───────────────────
   const socketRef = useRef(null);
 
+  // Canonical feed symbol: server broadcasts on the Yahoo-suffixed room
+  // (getQuote('RELIANCE') returns tradingSymbol 'RELIANCE.NS'). Subscribing
+  // with the bare symbol joins a room that never receives ticks — that was
+  // why the dashboard watchlist stayed empty while indices (^NSEI) worked.
+  const toFeedSym = (s) => {
+    if (!s) return s;
+    if (s.startsWith('^')) return s;
+    const base = s.replace('.NS', '').replace('.BO', '');
+    return s.endsWith('.BO') ? `${base}.BO` : `${base}.NS`;
+  };
+  const baseSym = (s) => (s || '').replace('.NS', '').replace('.BO', '');
+  const feedSymbols = () => [...INDICES, ...watchlist].map(toFeedSym);
+
+  // Store every tick under BOTH the feed key and the bare base key so all
+  // consumers (watchlist, positions, quote header) find it either way.
+  const storeQuote = (quote) => {
+    const feed = quote.tradingSymbol || quote.symbol;
+    if (!feed) return;
+    const base = baseSym(feed);
+    setQuotes(prev => ({ ...prev, [feed]: quote, ...(base && base !== feed ? { [base]: quote } : {}) }));
+  };
+  const storeDepth = (symbol, depth) => {
+    if (!symbol) return;
+    const base = baseSym(symbol);
+    setMarketDepth(prev => ({ ...prev, [symbol]: depth, ...(base && base !== symbol ? { [base]: depth } : {}) }));
+  };
+
+  // REST bootstrap + safety-net poll: instant data on login even before the
+  // first WS tick, and recovery if the socket drops silently.
+  useEffect(() => {
+    if (!user || !subStatus?.active) return;
+    let alive = true;
+    const bootstrap = async () => {
+      try {
+        const qs = await api.getQuotes(feedSymbols().join(','));
+        if (!alive || !qs) return;
+        (Array.isArray(qs) ? qs : [qs]).forEach(storeQuote);
+        setMarketLoading(false);
+      } catch {}
+    };
+    bootstrap();
+    const iv = setInterval(bootstrap, 60000);
+    return () => { alive = false; clearInterval(iv); };
+  }, [user, subStatus?.active, watchlist.join(',')]); // eslint-disable-line
+
   useEffect(() => {
     if (!user || !subStatus?.active) return;
 
@@ -101,24 +151,18 @@ export default function App() {
 
     socket.on('connect', () => {
       setMarketLoading(false);
-      // Subscribe to market data rooms
-      const allSymbols = [...INDICES, ...watchlist];
-      socket.emit('subscribe:quotes', allSymbols);
+      // Subscribe with canonical feed symbols (RELIANCE.NS, ^NSEI, …)
+      socket.emit('subscribe:quotes', feedSymbols());
       // Join user-private room with JWT for secure auth (v2 security fix)
       const jwtToken = localStorage.getItem('bt_token');
       if (jwtToken) socket.emit('auth:join', jwtToken);
     });
 
-    // Market data push — tradingSymbol is the canonical key
-    socket.on('quotes:update', (quote) => {
-      const key = quote.tradingSymbol || quote.symbol;
-      if (key) setQuotes(prev => ({ ...prev, [key]: quote }));
-    });
+    // Market data push — stored under feed key AND bare base key
+    socket.on('quotes:update', storeQuote);
 
     // Market depth (L2) update
-    socket.on('depth:update', ({ symbol, depth }) => {
-      if (symbol) setMarketDepth(prev => ({ ...prev, [symbol]: depth }));
-    });
+    socket.on('depth:update', ({ symbol, depth }) => storeDepth(symbol, depth));
 
     // OMS push: order filled — re-sync authoritative state from server
     socket.on('order:filled', (fill) => {
@@ -146,8 +190,7 @@ export default function App() {
   // Update subscription when watchlist changes
   useEffect(() => {
     if (socketRef.current && socketRef.current.connected) {
-      const allSymbols = [...INDICES, ...watchlist];
-      socketRef.current.emit('subscribe:quotes', allSymbols);
+      socketRef.current.emit('subscribe:quotes', feedSymbols());
     }
   }, [watchlist]);
 
@@ -233,12 +276,22 @@ export default function App() {
   const balanceWarn = getBalanceWarning(balance, subStatus?.subscription?.initialBalance || balance);
 
   // ── Page map ─────────────────────────────────────────────────────────────
+  // Kite parity: Dashboard (watchlist+chart+depth+dock) is home; Trade Desk keeps legacy desk
+  const exitPosition = (sym, ltp, qty) => {
+    setActivePage('dashboard');
+    showToast(`Exit ${sym} from Positions dock below the chart`, 'info');
+  };
   const pages = {
+    dashboard:  <DashboardPage quotes={quotes} marketDepth={marketDepth} watchlist={watchlist} onAddWatch={handleAddWatch} onRemoveWatch={handleRemWatch} holdings={holdings} balance={balance} onTrade={executeTrade} onOpenChart={openChart} />,
     market:     <MarketPage   quotes={quotes} marketStatus={marketStatus} marketLoading={marketLoading} onOpenChart={openChart} />,
-    trade:      <TradePage    quotes={quotes} holdings={holdings} balance={balance} onTrade={executeTrade} watchlist={watchlist} onAddWatch={handleAddWatch} />,
+    trade:      <TradePage    quotes={quotes} holdings={holdings} balance={balance} onTrade={executeTrade} watchlist={watchlist} onAddWatch={handleAddWatch} marketDepth={marketDepth} />,
     portfolio:  <PortfolioPage holdings={holdings} quotes={quotes} balance={balance} initialBalance={subStatus?.subscription?.initialBalance || balance} onTrade={executeTrade} />,
+    positions:  <><SessionBanner /><PositionsBook quotes={quotes} onExit={exitPosition} /></>,
+    funds:      <FundsPage balance={balance} quotes={quotes} holdings={holdings} showToast={showToast} />,
+    ledger:     <LedgerPage />,
+    pnl:        <PnlPage />,
+    basket:     <BasketPage showToast={showToast} />,
     blockchain: <BlockchainExplorer trades={trades} />,
-    watchlist:  <WatchlistPage watchlist={watchlist} quotes={quotes} onAdd={handleAddWatch} onRemove={handleRemWatch} onTrade={() => setActivePage('trade')} />,
     orders:     <OrdersPage />,
     news:       <NewsPage />,
     options:    <OptionChainPage symbol="^NSEI" onTrade={executeTrade} balance={balance} quotes={quotes} holdings={holdings} />,
@@ -316,7 +369,7 @@ export default function App() {
       >
         <ErrorBoundary key={activePage}>
           <div className="page-content fade-in-up" style={{ marginTop: balanceWarn ? 32 : 0 }}>
-            {pages[activePage] || pages.market}
+            {pages[activePage] || pages.dashboard}
           </div>
         </ErrorBoundary>
       </BrokerShell>

@@ -52,7 +52,11 @@ router.get('/sebi', (req, res) => {
     rules: [
       'Market hours: 9:15 AM to 3:30 PM IST, Monday to Friday',
       'Pre-market: 9:00 AM – 9:15 AM | Post-market: 3:40 PM – 4:00 PM',
-      'F&O expiry: last Thursday of each month',
+      'F&O expiry (SEBI Sep-2025): NSE Tuesday, BSE Thursday. Weeklies: NIFTY + SENSEX only; all other index derivatives monthly',
+      'F&O lots (NSE FAOP/70616, Jan-2026 series): NIFTY 65, BANKNIFTY 30, FINNIFTY 60, MIDCPNIFTY 120, SENSEX 20',
+      'MIS intraday max 5x leverage; auto square-off 3:15 PM IST. CNC delivery: 100% upfront, short-sell blocked (T+1)',
+      'Option buyers pay full premium upfront; sellers block SPAN + exposure. SEBI: 9/10 retail F&O traders lose money',
+      'STT (Finance Act 2026): equity delivery 0.1% both sides; intraday 0.025% sell; futures sell 0.05%; options sell 0.15% of premium; DP ₹15.34 on CNC sell',
       'Equity settlement: T+1 (simulated)',
       'Circuit breakers: ±5%, ±10%, ±20%',
     ],

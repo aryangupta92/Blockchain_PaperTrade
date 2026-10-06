@@ -4,6 +4,7 @@ const router  = express.Router();
 const axios   = require('axios');
 const { fetchQuoteSingle, toYahoo } = require('../services/marketDataService');
 const { calculateGreeks, calculateIV } = require('../services/optionsEngine');
+const { getSpec, underlyingOf, expiriesFor } = require('../services/foMaster');
 
 const YF_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36',
@@ -37,6 +38,9 @@ function calculateTimeToMaturity(expiryStr) {
 router.get('/chain', async (req, res) => {
   try {
     const { symbol = '^NSEI', expiry } = req.query;
+    const underlying = underlyingOf(symbol) || 'NIFTY';
+    const spec = getSpec(underlying) || { lot: 65, step: 50, exchange: 'NSE' };
+    const lotSize = spec.lot;
     let chainData = null;
     let error = null;
 
@@ -136,13 +140,15 @@ router.get('/chain', async (req, res) => {
 
         return res.json({
           symbol,
+          underlying,
           spotPrice,
           prevClose:         optionResult.quote?.regularMarketPreviousClose || spotPrice,
-          lotSize:           50,
+          lotSize,
+          step:              spec.step,
           pcr,
           maxPain:           null,
           totalVolume:       options.calls?.reduce((s,c) => s+(c.volume||0), 0) || 0,
-          exchange:          'NSE',
+          exchange:          spec.exchange,
           expiry:            expiryTs[0] ? new Date(expiryTs[0] * 1000).toISOString().split('T')[0] : null,
           expiries:          expiryTs.map(ts => new Date(ts * 1000).toISOString().split('T')[0]),
           chain,
@@ -227,8 +233,8 @@ router.get('/chain', async (req, res) => {
       });
 
       return res.json({
-        symbol, spotPrice: guessedSpot, prevClose: guessedSpot, lotSize: 50, pcr, maxPain, totalVolume: totalVol,
-        exchange: 'NSE', expiry: expiryDetails?.currentExpiry, expiries: expiryDetails?.expiries || [],
+        symbol, underlying, spotPrice: guessedSpot, prevClose: guessedSpot, lotSize, step: spec.step, pcr, maxPain, totalVolume: totalVol,
+        exchange: spec.exchange, expiry: expiryDetails?.currentExpiry, expiries: expiryDetails?.expiries || [],
         chain: formattedChain, source: 'dhan', timestamp: new Date().toISOString(),
       });
     }
@@ -265,8 +271,8 @@ router.get('/chain', async (req, res) => {
       const pcr = totalCallOI > 0 ? +(totalPutOI / totalCallOI).toFixed(2) : 0;
       
       return res.json({
-        symbol, spotPrice, prevClose: spotPrice, lotSize: 50, pcr, maxPain: null, totalVolume: 0,
-        exchange: 'NSE', expiry, expiries: [], chain, source: 'groww', timestamp: new Date().toISOString()
+        symbol, underlying, spotPrice, prevClose: spotPrice, lotSize, step: spec.step, pcr, maxPain: null, totalVolume: 0,
+        exchange: spec.exchange, expiry, expiries: [], chain, source: 'groww', timestamp: new Date().toISOString()
       });
     }
 
@@ -277,3 +283,5 @@ router.get('/chain', async (req, res) => {
 });
 
 module.exports = router;
+
+

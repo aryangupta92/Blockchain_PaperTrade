@@ -1,0 +1,244 @@
+/* Kite.css — Zerodha-Kite / Upstox / Dhan parity layer (dark theme, dense broker density) */
+
+.kite-dashboard {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr) 300px;
+  gap: 12px;
+  align-items: start;
+}
+@media (max-width: 1200px) {
+  .kite-dashboard { grid-template-columns: 300px minmax(0, 1fr); }
+  .kite-right-rail { display: none; }
+}
+@media (max-width: 860px) {
+  .kite-dashboard { grid-template-columns: 1fr; }
+}
+
+/* ── Watchlist (Kite left panel) ── */
+.kite-watch {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 560px;
+  max-height: calc(100vh - 140px);
+}
+.kite-watch-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.kite-watch-tab {
+  padding: 9px 12px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.kite-watch-tab.active { color: var(--accent-secondary); border-bottom-color: var(--accent-primary); }
+.kite-watch-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.kite-watch-search input {
+  flex: 1;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  color: var(--text-primary);
+}
+.kite-watch-search input:focus { outline: none; border-color: var(--accent-primary); }
+.kite-watch-list { overflow-y: auto; flex: 1; }
+.kite-wrow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  cursor: pointer;
+  position: relative;
+}
+.kite-wrow:hover { background: rgba(99,102,241,0.06); }
+.kite-wrow.selected { background: rgba(99,102,241,0.10); }
+.kite-wrow .sym { font-size: 12.5px; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 6px; }
+.kite-exch {
+  font-size: 9px; font-weight: 800; padding: 1px 5px; border-radius: 4px;
+  background: var(--bg-surface); border: 1px solid var(--border); color: var(--text-muted);
+}
+.kite-wrow .lname { font-size: 10.5px; color: var(--text-muted); margin-top: 1px; }
+.kite-wrow .px { font-family: var(--font-mono); font-size: 12.5px; font-weight: 700; text-align: right; }
+.kite-wrow .chg { font-size: 10.5px; font-weight: 700; text-align: right; }
+.kite-wrow-hover {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  display: none; gap: 4px; background: var(--bg-card); padding: 2px; border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.kite-wrow:hover .kite-wrow-hover { display: flex; }
+.kite-wrow:hover .kite-hide-hover { opacity: 0; }
+.kite-mini-btn {
+  font-size: 10px; font-weight: 800; padding: 4px 8px; border-radius: 6px; border: none; cursor: pointer;
+}
+.kite-mini-btn.b { background: #387ed1; color: #fff; }
+.kite-mini-btn.s { background: #eb5a47; color: #fff; }
+.kite-mini-btn.c { background: var(--bg-surface); color: var(--text-secondary); border: 1px solid var(--border); }
+.kite-search-results {
+  border-bottom: 1px solid var(--border);
+  max-height: 260px; overflow-y: auto; background: var(--bg-surface);
+}
+.kite-search-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 12px;
+}
+.kite-add-btn {
+  font-size: 10px; font-weight: 800; padding: 3px 8px; border-radius: 6px; cursor: pointer;
+  background: transparent; border: 1px solid var(--accent-primary); color: var(--accent-secondary);
+}
+
+/* ── Quote header (Kite top strip) ── */
+.kite-quote {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 22px;
+  align-items: center;
+}
+.kite-quote-sym { font-size: 15px; font-weight: 800; display: flex; align-items: center; gap: 8px; }
+.kite-quote-px { font-family: var(--font-mono); font-size: 18px; font-weight: 800; }
+.kite-quote-meta { display: flex; gap: 16px; flex-wrap: wrap; font-size: 11px; color: var(--text-muted); }
+.kite-quote-meta b { color: var(--text-primary); font-family: var(--font-mono); font-weight: 700; }
+.kite-exch-toggle { display: flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.kite-exch-toggle button {
+  padding: 4px 10px; font-size: 11px; font-weight: 800; background: transparent; border: none;
+  color: var(--text-muted); cursor: pointer;
+}
+.kite-exch-toggle button.active { background: var(--accent-primary); color: #fff; }
+
+/* ── Market depth ── */
+.kite-depth { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.kite-depth h4 { font-size: 12px; font-weight: 800; padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+.kite-depth table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.kite-depth th { text-align: right; padding: 5px 10px; color: var(--text-muted); font-weight: 600; font-size: 10.5px; }
+.kite-depth th:first-child, .kite-depth td:first-child { text-align: left; }
+.kite-depth td { padding: 4px 10px; font-family: var(--font-mono); }
+.kite-depth .bid-row { background: linear-gradient(90deg, rgba(16,185,129,0.07), transparent); }
+.kite-depth .ask-row { background: linear-gradient(90deg, rgba(244,63,94,0.07), transparent); }
+.kite-depth-bar { height: 3px; border-radius: 99px; margin-top: 2px; }
+
+/* ── Docked order ticket (Kite bottom sheet style) ── */
+.kite-dock-overlay {
+  position: fixed; inset: 0; z-index: 6000;
+  background: rgba(0,0,0,0.55); backdrop-filter: blur(2px);
+  display: flex; align-items: flex-end; justify-content: center;
+  animation: fadeIn 0.15s ease;
+}
+.kite-dock {
+  width: min(880px, 96vw);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 14px 14px 0 0;
+  box-shadow: 0 -18px 60px rgba(0,0,0,0.6);
+  animation: slideUp 0.22s cubic-bezier(0.32,0.72,0,1);
+  overflow: hidden;
+}
+.kite-dock-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.kite-dock-head.buy { background: rgba(56,126,209,0.14); }
+.kite-dock-head.sell { background: rgba(235,90,71,0.14); }
+.kite-dock-body {
+  display: grid; grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px; padding: 14px 16px;
+}
+@media (max-width: 760px) { .kite-dock-body { grid-template-columns: 1fr; } }
+.kite-field label { font-size: 10.5px; color: var(--text-muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; display: block; margin-bottom: 4px; }
+.kite-field input, .kite-field select {
+  width: 100%; padding: 8px 10px; border-radius: 8px;
+  background: var(--bg-layer, var(--bg-surface)); border: 1px solid var(--border);
+  color: var(--text-primary); font-size: 13px; font-family: var(--font-mono);
+}
+.kite-field input:focus, .kite-field select:focus { outline: none; border-color: var(--accent-primary); }
+.kite-seg { display: flex; gap: 6px; flex-wrap: wrap; }
+.kite-seg button {
+  padding: 6px 10px; border-radius: 7px; font-size: 11.5px; font-weight: 800;
+  border: 1px solid var(--border); background: var(--bg-surface); color: var(--text-muted); cursor: pointer;
+}
+.kite-seg button.active { background: #387ed1; border-color: #387ed1; color: #fff; }
+.kite-seg button.active.sell-active { background: #eb5a47; border-color: #eb5a47; }
+.kite-dock-foot {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 16px; border-top: 1px solid var(--border); background: var(--bg-surface);
+}
+.kite-submit {
+  padding: 10px 22px; border-radius: 8px; border: none; font-weight: 800; font-size: 13px; cursor: pointer;
+}
+.kite-submit.buy { background: #387ed1; color: #fff; }
+.kite-submit.sell { background: #eb5a47; color: #fff; }
+.kite-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+.kite-amo-badge {
+  font-size: 10px; font-weight: 800; padding: 3px 8px; border-radius: 99px;
+  background: rgba(245,158,11,0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.4);
+}
+
+/* ── Session banner ── */
+.kite-session {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 14px; border-radius: 10px; font-size: 12px; font-weight: 600;
+  border: 1px solid var(--border); background: var(--bg-card); margin-bottom: 12px;
+}
+.kite-session .dot { width: 8px; height: 8px; border-radius: 50%; }
+
+/* ── Funds ── */
+.kite-funds-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 14px; }
+.kite-fund-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+.kite-fund-card .lbl { font-size: 11px; color: var(--text-muted); font-weight: 600; margin-bottom: 6px; }
+.kite-fund-card .val { font-size: 20px; font-weight: 800; font-family: var(--font-mono); }
+.kite-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.kite-table th { text-align: left; padding: 8px 10px; color: var(--text-muted); font-size: 11px; font-weight: 700; border-bottom: 1px solid var(--border); }
+.kite-table td { padding: 9px 10px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+.kite-table tr:hover td { background: rgba(99,102,241,0.04); }
+
+/* ── Bottom dock tabs (Positions / Holdings / Orders) ── */
+.kite-dock-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 0; }
+.kite-dock-tabs button {
+  padding: 9px 14px; background: none; border: none; border-bottom: 2px solid transparent;
+  font-size: 12.5px; font-weight: 700; color: var(--text-muted); cursor: pointer;
+}
+.kite-dock-tabs button.active { color: var(--text-primary); border-bottom-color: #387ed1; }
+
+.kite-chip { font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 99px; }
+.kite-chip.cnc { background: rgba(16,185,129,0.14); color: #10b981; }
+.kite-chip.mis { background: rgba(245,158,11,0.14); color: #f59e0b; }
+.kite-chip.nrml { background: rgba(99,102,241,0.14); color: #818cf8; }
+.kite-chip.open { background: rgba(56,126,209,0.15); color: #5b9bd5; }
+.kite-chip.filled { background: rgba(16,185,129,0.15); color: #10b981; }
+.kite-chip.cancelled, .kite-chip.rejected { background: rgba(244,63,94,0.14); color: #f43f5e; }
+.kite-chip.pending, .kite-chip.trigger_pending { background: rgba(245,158,11,0.15); color: #f59e0b; }
+
+.kite-action-link { background: none; border: none; color: #387ed1; font-size: 11.5px; font-weight: 700; cursor: pointer; padding: 2px 6px; }
+.kite-action-link.danger { color: #eb5a47; }
+.kite-action-link:hover { text-decoration: underline; }
+
+/* Basket legs */
+.kite-leg { display: grid; grid-template-columns: 1fr 90px 90px 110px 40px; gap: 8px; align-items: center; padding: 6px 0; }
+.kite-leg input, .kite-leg select {
+  padding: 7px 8px; border-radius: 7px; background: var(--bg-surface);
+  border: 1px solid var(--border); color: var(--text-primary); font-size: 12px; font-family: var(--font-mono);
+}
+@media (max-width: 700px) { .kite-leg { grid-template-columns: 1fr 1fr; } }
