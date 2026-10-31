@@ -1,0 +1,18 @@
+{
+ "exportedAt": "2026-10-10T05:29:42.702Z",
+ "trades": 0,
+ "journals": [
+  {
+   "userId": "962d7838-1f96-4475-b5a7-d2ca8e2d5e23",
+   "setup": "",
+   "rating": 5,
+   "emotionOnEntry": "Neutral",
+   "emotionOnExit": "Neutral",
+   "marketCondition": "TRENDING",
+   "riskRewardPlanned": null,
+   "riskRewardActual": null
+  }
+ ],
+ "rows": [],
+ "note": "pnl computed FIFO-average from paper trades. Feed to train_recommendation.py."
+}

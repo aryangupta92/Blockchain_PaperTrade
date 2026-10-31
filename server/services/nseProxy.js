@@ -1,5 +1,13 @@
 const axios = require('axios');
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function nseExpiry(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return String(iso || '');
+  return `${m[3]}-${MONTHS[Number(m[2]) - 1]}-${m[1]}`;
+}
+
 class NSEProxy {
   constructor() {
     this.cookies = '';
@@ -18,22 +26,23 @@ class NSEProxy {
       return this.cookies;
     }
 
-    try {
-      const response = await axios.get('https://www.nseindia.com', {
-        headers: this.headers,
-        timeout: 10000
-      });
-      
-      const setCookie = response.headers['set-cookie'];
-      if (setCookie) {
-        this.cookies = setCookie.map(cookie => cookie.split(';')[0]).join('; ');
-        this.cookieRefreshTime = now;
+    for (const url of ['https://www.nseindia.com/option-chain', 'https://www.nseindia.com']) {
+      try {
+        const response = await axios.get(url, {
+          headers: { ...this.headers, Referer: 'https://www.nseindia.com/option-chain' },
+          timeout: 10000,
+        });
+        const setCookie = response.headers['set-cookie'];
+        if (setCookie) {
+          this.cookies = setCookie.map((cookie) => cookie.split(';')[0]).join('; ');
+          this.cookieRefreshTime = now;
+          return this.cookies;
+        }
+      } catch (err) {
+        console.error(`NSE Cookie fetch error (${url}):`, err.message);
       }
-      return this.cookies;
-    } catch (err) {
-      console.error('NSE Cookie fetch error:', err.message);
-      return this.cookies;
     }
+    return this.cookies;
   }
 
   async fetchAPI(endpoint) {
@@ -45,13 +54,14 @@ class NSEProxy {
         headers: {
           ...this.headers,
           'Cookie': cookies,
-          'Accept': '*/*',
+          'Accept': 'application/json, text/plain, */*',
+          'Referer': 'https://www.nseindia.com/option-chain',
         },
-        timeout: 10000
+        timeout: 10000,
       });
       return response.data;
     } catch (err) {
-      if (err.response && err.response.status === 401) {
+      if (err.response && (err.response.status === 401 || err.response.status === 403)) {
         this.cookieRefreshTime = 0; // force refresh on next call
       }
       console.error(`NSE API fetch error for ${endpoint}:`, err.message);
@@ -59,8 +69,36 @@ class NSEProxy {
     }
   }
 
-  async getOptionChain(symbol = 'NIFTY') {
-    return this.fetchAPI(`/option-chain-indices?symbol=${encodeURIComponent(symbol)}`);
+  /** Available option expiries, normalized to ISO dates. */
+  async getOptionChainContractInfo(symbol = 'NIFTY') {
+    const data = await this.fetchAPI(`/option-chain-contract-info?symbol=${encodeURIComponent(symbol)}`);
+    const raw = Array.isArray(data?.expiryDates) ? data.expiryDates
+      : Array.isArray(data?.data) ? data.data
+      : Array.isArray(data) ? data
+      : [];
+    return raw
+      .map((value) => {
+        const m = /^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/.exec(String(value));
+        if (!m) return /^\d{4}-\d{2}-\d{2}/.test(String(value)) ? String(value).slice(0, 10) : null;
+        const month = MONTHS.findIndex((name) => name.toLowerCase() === m[2].toLowerCase()) + 1;
+        if (!month) return null;
+        return `${m[3]}-${String(month).padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+      })
+      .filter(Boolean);
+  }
+
+  /** NSE migrated from /option-chain-indices to /option-chain-v3 (expiry required). */
+  async getOptionChain(symbol = 'NIFTY', expiry = '') {
+    let selected = expiry;
+    if (!selected) {
+      const expiries = await this.getOptionChainContractInfo(symbol);
+      selected = expiries[0] || '';
+    }
+    if (!selected) throw new Error(`No NSE expiry available for ${symbol}`);
+
+    return this.fetchAPI(
+      `/option-chain-v3?type=Indices&symbol=${encodeURIComponent(symbol)}&expiry=${encodeURIComponent(nseExpiry(selected))}`
+    );
   }
 
   // NSE doesn't have a direct clean API for FII/DII that's always public without an index id, but we can hit /fiidiiTradeReact

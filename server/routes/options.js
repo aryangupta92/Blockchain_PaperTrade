@@ -1,287 +1,229 @@
 'use strict';
+/**
+ * options.js — High-Performance Options Chain & Greeks Engine
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Provides sub-second option chain generation using the Black-Scholes-Merton model,
+ * real volatility surfaces, Greeks (Delta, Gamma, Theta, Vega, Rho), Max Pain, PCR,
+ * and Dhan API fallback when credentials are provided.
+ */
+
 const express = require('express');
 const router  = express.Router();
-const axios   = require('axios');
-const { fetchQuoteSingle, toYahoo } = require('../services/marketDataService');
-const { calculateGreeks, calculateIV } = require('../services/optionsEngine');
+const { getQuote, computeFOQuote } = require('../services/marketDataProvider');
+const { calculateGreeks, blackScholes } = require('../services/optionsEngine');
 const { getSpec, underlyingOf, expiriesFor } = require('../services/foMaster');
+const { fetchRealChain, isoExpiry } = require('../services/optionChainService');
 
-const YF_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36',
-  'Accept': 'application/json',
-};
-
-const DHAN_CLIENT_ID = process.env.DHAN_CLIENT_ID || '';
-const DHAN_ACCESS_TOKEN = process.env.DHAN_ACCESS_TOKEN || '';
-
-function getDhanSymbol(symbol) {
-  const symbolMap = { '^NSEI': 'NIFTY', '^BSESN': 'SENSEX', '^NSEBANK': 'BANKNIFTY', '^CNXIT': 'FINNIFTY' };
-  return symbolMap[symbol] || symbol.toUpperCase();
-}
-
-function getGrowwSymbol(symbol) {
-  if (symbol.includes('BANK')) return 'banknifty';
-  if (symbol.includes('IT') || symbol.includes('FINN')) return 'finnifty';
-  if (symbol.startsWith('^')) return 'nifty';
-  return symbol.toLowerCase();
-}
+const RISK_FREE_RATE = 0.065; // 6.5%
 
 function calculateTimeToMaturity(expiryStr) {
-  if (!expiryStr) return 0;
-  const expiryDate = new Date(expiryStr);
-  expiryDate.setHours(15, 30, 0, 0);
-  let ms = expiryDate.getTime() - Date.now();
-  if (ms < 0) ms = 0;
-  return ms / (1000 * 60 * 60 * 24 * 365); // in years
+  if (!expiryStr) return 0.02;
+  try {
+    const expiryDate = new Date(expiryStr);
+    expiryDate.setHours(15, 30, 0, 0);
+    let ms = expiryDate.getTime() - Date.now();
+    if (ms <= 0) return 0.001;
+    return ms / (1000 * 60 * 60 * 24 * 365);
+  } catch {
+    return 0.02;
+  }
 }
 
+// ── GET /api/options/chain ────────────────────────────────────────────────────
 router.get('/chain', async (req, res) => {
   try {
     const { symbol = '^NSEI', expiry } = req.query;
     const underlying = underlyingOf(symbol) || 'NIFTY';
     const spec = getSpec(underlying) || { lot: 65, step: 50, exchange: 'NSE' };
     const lotSize = spec.lot;
-    let chainData = null;
-    let error = null;
+    const step = spec.step;
 
-    try {
-      const dhanSymbol = getDhanSymbol(symbol);
-      const dhanUrl = `https://api.dhan.co/option-chain?symbol=${dhanSymbol}&expiry=${expiry || ''}`;
-      const dhanResponse = await axios.get(dhanUrl, {
-        headers: { 'Authorization': `Bearer ${DHAN_ACCESS_TOKEN}`, 'Content-Type': 'application/json' },
-        timeout: 8000
-      });
-      if (dhanResponse.data && dhanResponse.data.data) chainData = dhanResponse.data.data;
-    } catch (dhanErr) {
-      console.warn('Dhan API failed, falling back to Groww:', dhanErr.message);
-    }
+    // 1. Resolve expiries (used by both real and model paths)
+    const expList = expiriesFor(underlying, 8);
+    const selectedExpiryObj = expiry
+      ? expList.find(e => e.iso === expiry || e.code === expiry) || expList[0]
+      : expList[0];
+    const currentExpiryIso = isoExpiry(expiry) || selectedExpiryObj?.iso
+      || new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
 
-    if (!chainData) {
-      try {
-        const growwSym = getGrowwSymbol(symbol);
-        const growwUrls = [
-          `https://groww.in/v1/api/option_chain_service/v2/option_chain/index/${growwSym}`,
-          `https://groww.in/v1/api/option_chain_service/v1/option_chain/${growwSym}`,
-        ];
-        for (const url of growwUrls) {
-          try {
-            const fullUrl = expiry ? `${url}?expiry=${expiry}` : url;
-            const { data } = await axios.get(fullUrl, { timeout: 8000 });
-            if (data && (data.optionChain || data.data)) {
-              chainData = data.optionChain || data.data;
-              break;
-            }
-          } catch (_) { }
-        }
-      } catch (growwErr) {
-        console.warn('Groww API failed:', growwErr.message);
-      }
-    }
-
-    const r = 0.05; // 5% risk free rate assumed for India
-
-    if (!chainData) {
-      try {
-        const yhSym = toYahoo(symbol);
-        const url = `https://query2.finance.yahoo.com/v7/finance/options/${encodeURIComponent(yhSym)}`;
-        const { data } = await axios.get(url, { headers: YF_HEADERS, timeout: 10000 });
-        const optionResult = data?.optionChain?.result?.[0];
-        if (!optionResult) throw new Error('No Yahoo options data');
-
-        const spotPrice = optionResult.quote?.regularMarketPrice || 0;
-        const expiryTs  = optionResult.expirationDates || [];
-        const options   = optionResult.options?.[0] || {};
-        const calls     = options.calls  || [];
-        const puts      = options.puts   || [];
-
-        const t = calculateTimeToMaturity(options.expirationDate ? new Date(options.expirationDate * 1000) : null);
-
-        const strikeMap = {};
-        calls.forEach(c => {
-          if (!strikeMap[c.strike]) strikeMap[c.strike] = {};
-          const iv = c.impliedVolatility || calculateIV(c.lastPrice, spotPrice, c.strike, t, r, 'CE');
-          const greeks = calculateGreeks(spotPrice, c.strike, t, r, iv, 'CE');
-          
-          strikeMap[c.strike].call = {
-            ltp: c.lastPrice || 0, bid: c.bid || 0, ask: c.ask || 0,
-            oi: c.openInterest || 0, volume: c.volume || 0,
-            iv: +(iv * 100).toFixed(2),
-            oiChange: 0, change: c.change || 0, changePct: c.percentChange || 0,
-            ...greeks
-          };
-        });
-        puts.forEach(p => {
-          if (!strikeMap[p.strike]) strikeMap[p.strike] = {};
-          const iv = p.impliedVolatility || calculateIV(p.lastPrice, spotPrice, p.strike, t, r, 'PE');
-          const greeks = calculateGreeks(spotPrice, p.strike, t, r, iv, 'PE');
-          
-          strikeMap[p.strike].put = {
-            ltp: p.lastPrice || 0, bid: p.bid || 0, ask: p.ask || 0,
-            oi: p.openInterest || 0, volume: p.volume || 0,
-            iv: +(iv * 100).toFixed(2),
-            oiChange: 0, change: p.change || 0, changePct: p.percentChange || 0,
-            ...greeks
-          };
-        });
-
-        const chain = Object.entries(strikeMap)
-          .sort(([a], [b]) => +a - +b)
-          .map(([strike, sides]) => ({
-            strike: +strike,
-            call:   sides.call || { ltp:0, bid:0, ask:0, oi:0, volume:0, iv:0, oiChange:0, change:0, changePct:0, delta:0, gamma:0, theta:0, vega:0 },
-            put:    sides.put  || { ltp:0, bid:0, ask:0, oi:0, volume:0, iv:0, oiChange:0, change:0, changePct:0, delta:0, gamma:0, theta:0, vega:0 },
-            atm:    Math.abs(+strike - spotPrice) === Math.min(...Object.keys(strikeMap).map(s => Math.abs(+s - spotPrice))),
-            itm:    { call: +strike < spotPrice, put: +strike > spotPrice },
-          }));
-
-        const totalCallOI = calls.reduce((s, c) => s + (c.openInterest || 0), 0);
-        const totalPutOI  = puts.reduce((s,  p) => s + (p.openInterest || 0), 0);
-        const pcr = totalCallOI > 0 ? +(totalPutOI / totalCallOI).toFixed(2) : 0;
-
-        return res.json({
-          symbol,
-          underlying,
-          spotPrice,
-          prevClose:         optionResult.quote?.regularMarketPreviousClose || spotPrice,
-          lotSize,
-          step:              spec.step,
-          pcr,
-          maxPain:           null,
-          totalVolume:       options.calls?.reduce((s,c) => s+(c.volume||0), 0) || 0,
-          exchange:          spec.exchange,
-          expiry:            expiryTs[0] ? new Date(expiryTs[0] * 1000).toISOString().split('T')[0] : null,
-          expiries:          expiryTs.map(ts => new Date(ts * 1000).toISOString().split('T')[0]),
-          chain,
-          source:            'yahoo-finance',
-          timestamp:         new Date().toISOString(),
-        });
-      } catch (yfErr) {
-        throw new Error('All option chain providers failed');
-      }
-    }
-
-    if (chainData.optionChains) {
-      const liveChains = chainData.optionChains;
-      const expiryDetails = chainData.expiryDetailsDto;
-      const t = calculateTimeToMaturity(expiryDetails?.currentExpiry);
-      
-      let totalCallOI = 0, totalPutOI = 0, totalVol = 0;
-      let guessedSpot = 0, minLtpDiff = Infinity;
-
-      let formattedChain = liveChains.map(row => {
-        const call = row.callOption || {};
-        const put = row.putOption || {};
-        const k = row.strikePrice / 100;
-        
-        if (call.ltp && put.ltp) {
-          const diff = Math.abs(call.ltp - put.ltp);
-          if (diff < minLtpDiff) { minLtpDiff = diff; guessedSpot = k; }
-        }
-
-        totalCallOI += call.openInterest || 0;
-        totalPutOI += put.openInterest || 0;
-        totalVol += (call.volume || 0) + (put.volume || 0);
-
-        return {
-          strike: k,
-          callRaw: call,
-          putRaw: put
-        };
-      });
-
-      // Calculate Greeks with guessedSpot
-      formattedChain = formattedChain.map(row => {
-        const k = row.strike;
-        const call = row.callRaw;
-        const put = row.putRaw;
-
-        const callIV = call.impliedVolatility || calculateIV(call.ltp || 0, guessedSpot, k, t, r, 'CE');
-        const putIV = put.impliedVolatility || calculateIV(put.ltp || 0, guessedSpot, k, t, r, 'PE');
-
-        const callGreeks = calculateGreeks(guessedSpot, k, t, r, callIV, 'CE');
-        const putGreeks = calculateGreeks(guessedSpot, k, t, r, putIV, 'PE');
-
-        return {
-          strike: k,
-          call: {
-            ltp: call.ltp || 0, bid: call.lowTradeRange || call.bid || 0, ask: call.highTradeRange || call.ask || 0,
-            oi: call.openInterest || 0, oiChange: (call.openInterest || 0) - (call.prevOpenInterest || call.openInterest || 0),
-            volume: call.volume || 0, change: call.dayChange || 0, changePct: call.dayChangePercent || 0,
-            iv: +(callIV * 100).toFixed(2), ...callGreeks
-          },
-          put: {
-            ltp: put.ltp || 0, bid: put.lowTradeRange || put.bid || 0, ask: put.highTradeRange || put.ask || 0,
-            oi: put.openInterest || 0, oiChange: (put.openInterest || 0) - (put.prevOpenInterest || put.openInterest || 0),
-            volume: put.volume || 0, change: put.dayChange || 0, changePct: put.dayChangePercent || 0,
-            iv: +(putIV * 100).toFixed(2), ...putGreeks
-          },
-          atm: k === guessedSpot,
-          itm: { call: k < guessedSpot, put: k > guessedSpot },
-        };
-      });
-
-      const pcr = totalCallOI > 0 ? +(totalPutOI / totalCallOI).toFixed(2) : 0;
-      let maxPain = null;
-      let minPainVal = Infinity;
-      formattedChain.forEach(row => {
-        let pain = 0;
-        formattedChain.forEach(opt => {
-          if (opt.strike < row.strike) pain += opt.call.oi * (row.strike - opt.strike);
-          if (opt.strike > row.strike) pain += opt.put.oi * (opt.strike - row.strike);
-        });
-        if (pain < minPainVal) { minPainVal = pain; maxPain = row.strike; }
-      });
-
+    // 2. Prefer real exchange data: Dhan live chain, then NSE public chain.
+    const realChain = await fetchRealChain(underlying, currentExpiryIso);
+    if (realChain) {
+      const expiries = realChain.expiries?.length ? realChain.expiries : expList.map((e) => e.iso);
+      const expiryCodes = expiries.map(
+        (iso) => expList.find((e) => e.iso === iso)?.code || iso
+      );
       return res.json({
-        symbol, underlying, spotPrice: guessedSpot, prevClose: guessedSpot, lotSize, step: spec.step, pcr, maxPain, totalVolume: totalVol,
-        exchange: spec.exchange, expiry: expiryDetails?.currentExpiry, expiries: expiryDetails?.expiries || [],
-        chain: formattedChain, source: 'dhan', timestamp: new Date().toISOString(),
-      });
-    }
-    
-    // Groww format parsing logic (simplified fallback)
-    if (chainData.records) {
-      const records = chainData.records;
-      const spotPrice = chainData.underlyingValue;
-      const t = calculateTimeToMaturity(expiry);
-      
-      const chain = records.map(r => {
-        const callIV = r.CE?.impliedVolatility || calculateIV(r.CE?.lastPrice || 0, spotPrice, r.strikePrice, t, r, 'CE');
-        const putIV = r.PE?.impliedVolatility || calculateIV(r.PE?.lastPrice || 0, spotPrice, r.strikePrice, t, r, 'PE');
-        const callGreeks = calculateGreeks(spotPrice, r.strikePrice, t, r, callIV, 'CE');
-        const putGreeks = calculateGreeks(spotPrice, r.strikePrice, t, r, putIV, 'PE');
-        
-        return {
-          strike: r.strikePrice,
-          call: {
-            ltp: r.CE?.lastPrice || 0, oi: r.CE?.openInterest || 0, oiChange: r.CE?.changeinOpenInterest || 0, volume: r.CE?.totalTradedVolume || 0,
-            iv: +(callIV * 100).toFixed(2), change: r.CE?.change || 0, changePct: r.CE?.pChange || 0, bid: 0, ask: 0, ...callGreeks
-          },
-          put: {
-            ltp: r.PE?.lastPrice || 0, oi: r.PE?.openInterest || 0, oiChange: r.PE?.changeinOpenInterest || 0, volume: r.PE?.totalTradedVolume || 0,
-            iv: +(putIV * 100).toFixed(2), change: r.PE?.change || 0, changePct: r.PE?.pChange || 0, bid: 0, ask: 0, ...putGreeks
-          },
-          atm: Math.abs(r.strikePrice - spotPrice) < 50,
-          itm: { call: r.strikePrice < spotPrice, put: r.strikePrice > spotPrice }
-        };
-      });
-
-      const totalCallOI = records.reduce((s, r) => s + (r.CE?.openInterest || 0), 0);
-      const totalPutOI = records.reduce((s, r) => s + (r.PE?.openInterest || 0), 0);
-      const pcr = totalCallOI > 0 ? +(totalPutOI / totalCallOI).toFixed(2) : 0;
-      
-      return res.json({
-        symbol, underlying, spotPrice, prevClose: spotPrice, lotSize, step: spec.step, pcr, maxPain: null, totalVolume: 0,
-        exchange: spec.exchange, expiry, expiries: [], chain, source: 'groww', timestamp: new Date().toISOString()
+        ...realChain,
+        symbol,
+        underlying,
+        lotSize,
+        step,
+        expiries,
+        expiryCodes,
       });
     }
 
-    throw new Error('Unsupported format');
+    // 3. Model fallback requires a real underlying price - never invent a spot.
+    const spotQuote = await getQuote(symbol).catch(() => null);
+    const spotPrice = spotQuote?.price;
+    if (!spotPrice) {
+      return res.status(503).json({
+        error: `No live ${underlying} price available for model fallback.`,
+        symbol,
+        underlying,
+        source: 'UNAVAILABLE',
+        estimated: true,
+        chain: [],
+      });
+    }
+    const T = Math.max(0.001, calculateTimeToMaturity(currentExpiryIso));
+
+    // 4. Model fallback - deterministic, clearly marked estimated.
+    const atmStrike = Math.round(spotPrice / step) * step;
+    const STRIKE_COUNT_EACH_SIDE = 15; // 31 strikes total
+
+    let totalCallOI = 0;
+    let totalPutOI  = 0;
+    let totalVolume = 0;
+
+    const strikes = [];
+    for (let i = -STRIKE_COUNT_EACH_SIDE; i <= STRIKE_COUNT_EACH_SIDE; i++) {
+      strikes.push(atmStrike + i * step);
+    }
+
+    const chain = strikes.map(k => {
+      const moneyness = spotPrice / k;
+      // Realistically skewed Volatility Smile
+      const baseIV = 0.135 + Math.abs(Math.log(moneyness)) * 0.42 + Math.sqrt(T) * 0.12;
+      const iv = Math.min(0.70, Math.max(0.08, baseIV));
+
+      // Premiums
+      const callBS = blackScholes(spotPrice, k, T, RISK_FREE_RATE, iv, 'CE');
+      const putBS  = blackScholes(spotPrice, k, T, RISK_FREE_RATE, iv, 'PE');
+      const callLtp = +Math.max(0.05, callBS).toFixed(2);
+      const putLtp  = +Math.max(0.05, putBS).toFixed(2);
+
+      // Greeks
+      const callGreeks = calculateGreeks(spotPrice, k, T, RISK_FREE_RATE, iv, 'CE');
+      const putGreeks  = calculateGreeks(spotPrice, k, T, RISK_FREE_RATE, iv, 'PE');
+
+      // Spreads
+      const callSpread = Math.max(0.05, +(callLtp * 0.004).toFixed(2));
+      const putSpread  = Math.max(0.05, +(putLtp * 0.004).toFixed(2));
+
+      // Realistic OI Distribution (peaks around round strikes & near ATM)
+      const distWeight = Math.exp(-Math.pow((k - spotPrice) / (step * 8), 2));
+      const isRoundStrike = k % (step * 5) === 0 ? 1.8 : 1.0;
+      const callOI = Math.floor((35000 + distWeight * 120000 * (k >= spotPrice ? 1.4 : 0.6)) * isRoundStrike);
+      const putOI  = Math.floor((35000 + distWeight * 120000 * (k <= spotPrice ? 1.4 : 0.6)) * isRoundStrike);
+      const mix = Math.abs(Math.sin(k * 0.017 + spotPrice * 0.001));
+      const callVol = Math.floor(callOI * (0.15 + mix * 0.1));
+      const putVol  = Math.floor(putOI * (0.18 - mix * 0.06));
+
+      totalCallOI += callOI;
+      totalPutOI  += putOI;
+      totalVolume += (callVol + putVol);
+
+      const callPrev = +(callLtp * 0.985).toFixed(2);
+      const putPrev  = +(putLtp * 0.985).toFixed(2);
+      const callOiChange = Math.floor((mix - 0.5) * 8000);
+      const putOiChange = -Math.floor((mix - 0.5) * 6500);
+
+      return {
+        strike: k,
+        call: {
+          ltp:       callLtp,
+          bid:       +(callLtp - callSpread).toFixed(2),
+          ask:       +(callLtp + callSpread).toFixed(2),
+          change:    +(callLtp - callPrev).toFixed(2),
+          changePct: callPrev ? +(((callLtp - callPrev) / callPrev) * 100).toFixed(2) : 0,
+          volume:    callVol,
+          oi:        callOI,
+          oiChange:  callOiChange,
+          iv:        +(iv * 100).toFixed(2),
+          ...callGreeks,
+        },
+        put: {
+          ltp:       putLtp,
+          bid:       +(putLtp - putSpread).toFixed(2),
+          ask:       +(putLtp + putSpread).toFixed(2),
+          change:    +(putLtp - putPrev).toFixed(2),
+          changePct: putPrev ? +(((putLtp - putPrev) / putPrev) * 100).toFixed(2) : 0,
+          volume:    putVol,
+          oi:        putOI,
+          oiChange:  putOiChange,
+          iv:        +(iv * 100).toFixed(2),
+          ...putGreeks,
+        },
+        atm: Math.abs(k - spotPrice) < step / 2,
+        itm: {
+          call: k < spotPrice,
+          put:  k > spotPrice,
+        },
+      };
+    });
+
+    // 5. PCR & Max Pain Calculation
+    const pcr = totalCallOI > 0 ? +(totalPutOI / totalCallOI).toFixed(2) : 1.0;
+    let minPainLoss = Infinity;
+    let maxPain = atmStrike;
+
+    chain.forEach(row => {
+      let pain = 0;
+      chain.forEach(item => {
+        if (item.strike < row.strike) pain += item.call.oi * (row.strike - item.strike);
+        if (item.strike > row.strike) pain += item.put.oi * (item.strike - row.strike);
+      });
+      if (pain < minPainLoss) {
+        minPainLoss = pain;
+        maxPain = row.strike;
+      }
+    });
+
+    const payload = {
+      symbol,
+      underlying,
+      spotPrice,
+      prevClose:   spotQuote?.prevClose || spotPrice,
+      lotSize,
+      step,
+      pcr,
+      maxPain,
+      totalVolume,
+      totalCallOI,
+      totalPutOI,
+      exchange:    spec.exchange,
+      expiry:      currentExpiryIso,
+      expiries:    expList.map(e => e.iso),
+      expiryCodes: expList.map(e => e.code),
+      chain,
+      source:      'BLACK-SCHOLES-ESTIMATE',
+      estimated:   true,
+      notice:      'Model-generated premiums, OI and volume. Not exchange data.',
+      timestamp:   new Date().toISOString(),
+    };
+
+    res.json(payload);
   } catch (err) {
-    res.status(503).json({ error: 'Failed to fetch options chain data', details: err.message });
+    console.error('Option chain error:', err);
+    res.status(500).json({ error: 'Failed to generate option chain', details: err.message });
+  }
+});
+
+// ── GET /api/options/quote ────────────────────────────────────────────────────
+router.get('/quote', async (req, res) => {
+  try {
+    const { symbol } = req.query;
+    if (!symbol) return res.status(400).json({ error: 'symbol query parameter required' });
+
+    const quote = computeFOQuote(symbol);
+    if (!quote) return res.status(404).json({ error: 'Could not parse F&O contract: ' + symbol });
+
+    res.json({ success: true, data: quote, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
 module.exports = router;
-
-
