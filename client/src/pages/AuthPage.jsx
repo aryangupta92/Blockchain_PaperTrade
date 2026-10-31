@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import './AuthPage.css';
 import api from '../services/api';
+import BrandLogo from '../components/BrokerShell/BrandLogo';
 import { Shield, TrendingUp, Lock, Mail, User, Phone, CreditCard, Calendar, Eye, EyeOff, AlertTriangle } from 'lucide-react';
 
 const SEBI_DISCLAIMER = `This is a paper trading simulation platform regulated under SEBI guidelines for educational purposes. No real money is involved. Virtual funds are provided for practice only. Past performance does not guarantee future results. Trading in securities market is subject to market risk. Please read all risk disclosure documents carefully before participating.`;
@@ -12,6 +13,28 @@ export default function AuthPage({ onAuth }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [pendingUser, setPendingUser] = useState(null);
+  const [tickerItems, setTickerItems] = useState(null);
+
+  // Live index strip for the login screen (public quotes endpoint; falls back to static labels offline)
+  useEffect(() => {
+    let on = true;
+    fetch('/api/market/quotes?symbols=^NSEI,^BSESN,^NSEBANK,^CNXIT,^NSMIDCP150')
+      .then((r) => r.json())
+      .then((d) => {
+        if (!on) return;
+        const arr = d.data || d.quotes || [];
+        if (Array.isArray(arr) && arr.length) {
+          setTickerItems(arr.slice(0, 5).map((q) => {
+            const name = (q.name || q.symbol || '').replace('Nifty 50', 'NIFTY 50').replace('S&P BSE SENSEX', 'SENSEX');
+            const px = Number(q.price) ? Number(q.price).toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '—';
+            const pct = q.changePercent != null ? `${q.changePercent >= 0 ? '▲' : '▼'}${Math.abs(q.changePercent).toFixed(2)}%` : '';
+            return `${name} ${px} ${pct}`.trim();
+          }));
+        }
+      })
+      .catch(() => {});
+    return () => { on = false; };
+  }, []);
 
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
 
@@ -57,12 +80,22 @@ export default function AuthPage({ onAuth }) {
     finally { setLoading(false); }
   };
 
+  const handleDemoLogin = async () => {
+    setError(''); setLoading(true);
+    try {
+      const { token, user } = await api.login({ email: 'demo@blocktrade.in', password: 'demo1234' });
+      localStorage.setItem('bt_token', token);
+      onAuth(user, token);
+    } catch (err) { setError(err.message); }
+    finally { setLoading(false); }
+  };
+
   return (
     <div className="auth-page">
       {/* Left Panel */}
       <div className="auth-left">
         <div className="auth-brand">
-          <div className="auth-logo">B</div>
+          <BrandLogo size={40} />
           <div>
             <div className="auth-logo-name">BlockTrade</div>
             <div className="auth-logo-sub">PAPER TRADING · SEBI COMPLIANT</div>
@@ -79,6 +112,7 @@ export default function AuthPage({ onAuth }) {
             { icon: TrendingUp, label: 'Live Market Data', desc: 'Real NSE/BSE prices, NIFTY 50, SENSEX, BANK NIFTY' },
             { icon: Shield, label: 'Blockchain Secured', desc: 'SHA-256 immutable ledger for every trade you place' },
             { icon: Lock, label: 'SEBI Guidelines', desc: 'Fully compliant with SEBI paper trading regulations' },
+          // eslint-disable-next-line no-unused-vars
           ].map(({ icon: Icon, label, desc }) => (
             <div key={label} className="auth-feature-item">
               <div className="auth-feature-icon"><Icon size={18} /></div>
@@ -92,7 +126,7 @@ export default function AuthPage({ onAuth }) {
 
         <div className="auth-ticker">
           <div className="auth-ticker-inner">
-            {['NIFTY 50 24,264.85 ▲0.28%', 'SENSEX 78,233.18 ▲0.31%', 'BANK NIFTY 56,174.80 ▲0.18%', 'NIFTY IT 31,817.50 ▲0.45%', 'NIFTY MID 16,884.80 ▲0.80%'].map(t => (
+            {(tickerItems || ['NIFTY 50 · live on login', 'SENSEX · live on login', 'BANK NIFTY · live on login', 'NIFTY IT · live on login', 'NIFTY MID · live on login']).map(t => (
               <span key={t}>{t}&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;</span>
             ))}
           </div>
@@ -183,8 +217,11 @@ export default function AuthPage({ onAuth }) {
                 </button>
 
                 {mode === 'login' && (
-                  <div style={{ textAlign: 'center', marginTop: 12, color: 'var(--text-muted)', fontSize: 12 }}>
-                    Demo: <strong style={{ color: 'var(--accent-secondary)' }}>demo@blocktrade.in</strong> / <strong style={{ color: 'var(--accent-secondary)' }}>demo1234</strong>
+                  <div style={{ textAlign: 'center', marginTop: 12 }}>
+                    <button type="button" className="auth-submit-btn" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} onClick={handleDemoLogin} disabled={loading}>
+                      {loading ? 'Please wait…' : 'Try Demo Account'}
+                    </button>
+                    <div style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 6 }}>One-click demo login — no signup needed</div>
                   </div>
                 )}
               </form>

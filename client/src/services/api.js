@@ -6,15 +6,31 @@ const headers = () => {
 };
 
 async function apiFetch(path, options = {}) {
-  const res  = await fetch(BASE + path, { ...options, headers: { ...headers(), ...options.headers } });
-  const data = await res.json().catch(() => ({}));
+  const doFetch = async (retried = false) => {
+    const res  = await fetch(BASE + path, { ...options, headers: { ...headers(), ...options.headers } });
+    const data = await res.json().catch(() => ({}));
 
-  // For OMS order rejections (422) we return the payload instead of throwing
-  // so the caller can surface violations to the user gracefully.
-  if (res.status === 422) return data;
+    // For OMS order rejections (422) we return the payload instead of throwing
+    // so the caller can surface violations to the user gracefully.
+    if (res.status === 422) return data;
 
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-  return data;
+    // Auth hardening: on access-token expiry, rotate via the httpOnly refresh
+    // cookie and retry the original request once.
+    if (res.status === 401 && !retried) {
+      try {
+        const r = await fetch(`${BASE}/auth/refresh`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+        const rdata = await r.json().catch(() => ({}));
+        if (r.ok && rdata?.token) {
+          localStorage.setItem('bt_token', rdata.token);
+          return doFetch(true);
+        }
+      } catch { /* fall through to the error path */ }
+    }
+
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  };
+  return doFetch(false);
 }
 
 const api = {
@@ -57,7 +73,13 @@ const api = {
   getInrRate:   () => apiFetch('/market/inr-rate'),
 
   /** FII/DII data (directional estimate until Dhan API is configured) */
-  getFiiDii:    () => apiFetch('/market/fii-dii'),
+  getFiiDii:        () => apiFetch('/market/fii-dii'),
+
+  /** All major NSE Sectoral Indices (Bank Nifty, IT, Auto, Pharma, FMCG, Metal, etc.) */
+  getSectorIndices: () => apiFetch('/market/sector-indices').then(d => d.data || []),
+
+  /** Single Option Quote & Greeks via Black-Scholes Engine */
+  getOptionQuote:   (symbol) => apiFetch(`/options/quote?symbol=${encodeURIComponent(symbol)}`).then(d => d.data || d),
 
   // ── Trades & Orders ───────────────────────────────────────────────────────────
   /**
@@ -98,6 +120,10 @@ const api = {
   login:      (data) => apiFetch('/auth/login',          { method: 'POST', body: JSON.stringify(data) }),
   getMe:      ()     => apiFetch('/auth/me'),
   acceptRisk: ()     => apiFetch('/auth/risk-disclosure', { method: 'POST' }),
+  topup:      (amount) => apiFetch('/auth/topup', { method: 'POST', body: JSON.stringify({ amount }) }),
+  /** Rotate refresh token via httpOnly cookie and store the new access token */
+  refresh:    ()     => apiFetch('/auth/refresh',       { method: 'POST' }),
+  logout:     ()     => apiFetch('/auth/logout',        { method: 'POST' }).catch(() => ({ success: true })),
 
   // ── Subscription ──────────────────────────────────────────────────────────────
   getPlans:     ()       => apiFetch('/subscription/plans').then(d => d.plans),
@@ -139,6 +165,18 @@ const api = {
   getAIBiasCoach: () => apiFetch('/ai/bias-coach', { method: 'POST' }),
   /** NEW: Validate backtested strategy with AI (Module 3) */
   validateStrategy: (data) => apiFetch('/ai/validate-strategy', { method: 'POST', body: JSON.stringify(data) }),
+  /** NEW: Hybrid where-should-I-invest recommender (skill + market + persona) */
+  getInvestRecommendation: () => apiFetch('/ai/invest-recommendation', { method: 'POST' }),
+
+  // ── Phase 3: trained models ──────────────────────────────────────────────
+  /** Trained direction forecast: { state: live|no-edge|untrained, direction, probability, ... } */
+  getForecast: (symbol, timeframe = '5m') => apiFetch(`/ai/forecast?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}`),
+  /** News sentiment per symbol */
+  getSentiment: (symbols) => apiFetch(`/ai/sentiment?symbols=${encodeURIComponent(symbols)}`),
+  /** Deterministic journal bias report */
+  getBiasReport: () => apiFetch('/ai/bias-report'),
+  /** Score a draft journal entry before saving */
+  scoreBias: (entry) => apiFetch('/ai/bias-score', { method: 'POST', body: JSON.stringify(entry) }),
 
   // ── Backtesting (Module 3) ────────────────────────────────────────────────────
   /** Run backtest engine with Indian tax model */
@@ -157,6 +195,18 @@ const api = {
   getHealth:    () => apiFetch('/system/health'),
   getSebiRules: () => apiFetch('/system/sebi'),
 
+  // ── DhanHQ real data feed (consent login + health) ─────────────────────────
+  /** POST -> { loginUrl, consentAppId } — open loginUrl in a browser */
+  dhanAuthStart:  () => apiFetch('/dhan/auth/start',  { method: 'POST' }),
+  /** POST { tokenId } -> token status (paste tokenId from the redirect URL) */
+  dhanAuthFinish: (tokenId) => apiFetch('/dhan/auth/finish', { method: 'POST', body: JSON.stringify({ tokenId }) }),
+  dhanAuthStatus: () => apiFetch('/dhan/auth/status'),
+  /** Paste a token generated at web.dhan.co directly (verified before saving) */
+  dhanSetToken: (accessToken) => apiFetch('/dhan/auth/token', { method: 'POST', body: JSON.stringify({ accessToken }) }),
+  dhanAuthLogout: () => apiFetch('/dhan/auth/logout', { method: 'POST' }),
+  /** Real-time feed health: connection, rate limits, instrument count */
+  dhanFeedHealth: () => apiFetch('/dhan/feed-health'),
+
   // ── Extensions (ADDITIVE broker-parity, base untouched) ─────────────────────
   getSession:  () => apiFetch('/ext/session'),
   getAmo:      () => apiFetch('/ext/amo'),
@@ -168,6 +218,10 @@ const api = {
   computeIndicators: (candles, studies) => apiFetch('/ext/indicators', { method: 'POST', body: JSON.stringify({ candles, studies }) }),
   getDrawings: (symbol) => apiFetch(`/ext/drawings?symbol=${encodeURIComponent(symbol)}`),
   saveDrawings: (symbol, drawings) => apiFetch('/ext/drawings', { method: 'POST', body: JSON.stringify({ symbol, drawings }) }),
+
+  // ── Notifications ─────────────────────────────────────────────────────────
+  getNotifications: (limit = 50) => apiFetch(`/notifications?limit=${limit}`),
+  markNotificationsRead: (ids) => apiFetch('/notifications/read', { method: 'POST', body: JSON.stringify(ids ? { ids } : {}) }),
 };
 
 export default api;

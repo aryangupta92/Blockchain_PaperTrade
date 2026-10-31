@@ -40,3 +40,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# runtime logs and cache
+*.log
+*.err
+server/data/*.log
+server/data/*.err
+server/data/dhan_token.json
+server/data/instruments.json

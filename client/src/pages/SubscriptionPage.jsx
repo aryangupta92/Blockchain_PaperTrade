@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import './SubscriptionPage.css';
 import api from '../services/api';
+import BrandLogo from '../components/BrokerShell/BrandLogo';
 import { Shield, Zap, Star, CheckCircle, TrendingUp, Link, AlertTriangle, LogOut } from 'lucide-react';
 
 export default function SubscriptionPage({ user, onSubscribed, onLogout, reason }) {
   const [plans, setPlans] = useState([]);
-  const [loading, setLoading] = useState(false);
   const [purchasing, setPurchasing] = useState('');
   const [error, setError] = useState('');
 
@@ -19,8 +19,10 @@ export default function SubscriptionPage({ user, onSubscribed, onLogout, reason 
       // 1. Dual-Chain Execution: Attempt Ethereum/Sepolia transaction
       try {
         const { purchaseSubscriptionOnChain } = await import('../services/web3');
-        const ethTxHash = await purchaseSubscriptionOnChain(planId);
-        console.log("Subscription recorded on Ethereum. TxHash:", ethTxHash);
+        const ethRes = await purchaseSubscriptionOnChain(planId);
+        const ethTxHash = typeof ethRes === 'string' ? ethRes : ethRes?.hash;
+        if (ethRes?.simulated) console.log('Subscription simulated on-chain (no contract deployed). TxHash:', ethTxHash);
+        else console.log("Subscription recorded on Ethereum. TxHash:", ethTxHash);
       } catch (err) {
         console.warn("MetaMask subscription sync failed or skipped:", err.message);
       }
@@ -45,7 +47,7 @@ export default function SubscriptionPage({ user, onSubscribed, onLogout, reason 
       {/* Header */}
       <div className="sub-header">
         <div className="sub-brand">
-          <div className="auth-logo">B</div>
+          <BrandLogo size={40} />
           <div>
             <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)' }}>BlockTrade</div>
             <div style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.1em' }}>PAPER TRADING PLATFORM</div>

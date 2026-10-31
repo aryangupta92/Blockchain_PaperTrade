@@ -111,7 +111,12 @@ export const getContract = async (withSigner = true) => {
 export const registerOnChain = async (name, email) => {
   try {
     const contract = await getContract(true);
-    if (!contract) return true; // Simulated success if no contract address yet
+    // No contract deployed (local dev / demo): return an explicit simulated result
+    // so the UI can show "simulated" instead of pretending it is on-chain.
+    if (!contract) {
+      console.warn('[web3] No contract deployed — simulating registerOnChain (not on-chain).');
+      return { simulated: true, ok: true };
+    }
     const tx = await contract.registerUser(name, email);
     await tx.wait();
     return true;
@@ -124,7 +129,10 @@ export const registerOnChain = async (name, email) => {
 export const purchaseSubscriptionOnChain = async (planId) => {
   try {
     const contract = await getContract(true);
-    if (!contract) return true;
+    if (!contract) {
+      console.warn('[web3] No contract deployed — simulating purchaseSubscriptionOnChain (not on-chain).');
+      return { simulated: true, hash: 'simulate_tx_hash' };
+    }
 
     let ethRequired = "0";
     if (planId === "starter") ethRequired = "0.001";
@@ -146,8 +154,8 @@ export const recordTradeOnChain = async (symbol, qty, price, side, localHash) =>
   try {
     const contract = await getContract(true);
     if (!contract) {
-      console.log("MetaMask: Simulated recording trade ->", symbol, side);
-      return "simulate_tx_hash";
+      console.warn('[web3] No contract deployed — simulating recordTradeOnChain (not on-chain):', symbol, side);
+      return { simulated: true, hash: 'simulate_tx_hash' };
     }
 
     // Pass price * 100

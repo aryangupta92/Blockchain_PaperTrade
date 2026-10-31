@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import './App.css';
 import { io } from 'socket.io-client';
 
@@ -9,25 +9,30 @@ import SubscriptionPage  from './pages/SubscriptionPage';
 // Shell
 import BrokerShell       from './components/BrokerShell/BrokerShell';
 
-// Pages inside shell
+// Pages inside shell (light — loaded eagerly)
 import MarketPage        from './components/Market/MarketPage';
 import TradePage         from './components/Trading/TradePage';
 import PortfolioPage     from './components/Portfolio/PortfolioPage';
-import BlockchainExplorer from './components/Blockchain/BlockchainExplorer';
 import OrdersPage        from './components/Orders/OrdersPage';
 import NewsPage          from './components/News/NewsPage';
-import OptionChainPage   from './components/OptionChain/OptionChainPage';
-import ScreenerPage      from './components/Screener/ScreenerPage';
 import JournalPage       from './components/Journal/JournalPage';
-import TerminalPage      from './components/Terminal/TerminalPage';
-import RiskAdvisorPage   from './components/RiskAdvisor/RiskAdvisorPage';
-import BacktestPage      from './components/Backtest/BacktestPage';
+// Heavy pages — code-split via lazy()
+const BlockchainExplorer = lazy(() => import('./components/Blockchain/BlockchainExplorer'));
+const OptionChainPage    = lazy(() => import('./components/OptionChain/OptionChainPage'));
+const BacktestPage       = lazy(() => import('./components/Backtest/BacktestPage'));
+const AIDashboard        = lazy(() => import('./components/AIDashboard/AIDashboard'));
+const StrategyBuilder    = lazy(() => import('./components/OptionChain/StrategyBuilder'));
+const PortfolioAnalytics = lazy(() => import('./components/Portfolio/PortfolioAnalytics'));
+const PriceAlerts        = lazy(() => import('./components/Alerts/PriceAlerts'));
 // Broker-parity pages (Kite/Upstox/Dhan layout)
 import DashboardPage     from './components/Broker/DashboardPage';
 import FundsPage         from './components/Broker/FundsPage';
 import PositionsBook     from './components/Broker/PositionsBook';
 import SessionBanner     from './components/Broker/SessionBanner';
-import { LedgerPage, PnlPage, BasketPage } from './components/Broker/ReportsPage';
+import DhanFeedSettings  from './components/Settings/DhanFeedSettings';
+import { LedgerPage, PnlPage } from './components/Broker/ReportsPage';
+import LandingPage        from './pages/LandingPage';
+import { DisclaimerPage, PrivacyPolicyPage, TermsOfServicePage, DpdpPage } from './pages/LegalPages';
 
 // Full-screen chart
 import ChartPage         from './components/Chart/ChartPage';
@@ -37,44 +42,87 @@ import ErrorBoundary     from './components/ErrorBoundary';
 import api               from './services/api';
 import { getMarketStatus, getBalanceWarning } from './utils/sebi';
 
-// ── Initial state helpers ─────────────────────────────────────────────────────
+// â”€â”€ Initial state helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const LOAD = (k, def) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : def; } catch { return def; } };
-const SAVE = (k, v)   => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+const SAVE = (k, v)   => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage may be blocked */ } };
 
 const WATCHED_DEFAULT = ['RELIANCE','TCS','HDFCBANK','INFY','ICICIBANK','SBIN','WIPRO','BAJFINANCE'];
-const INDICES = ['^NSEI','^BSESN','^NSEBANK','^CNXIT','^NSEMDCP50'];
+const INDICES = ['^NSEI','^BSESN','^NSEBANK','^CNXFINANCE','^CNXIT','^NSMIDCP150'];
+const WATCHLIST_KEY = 'bt_watchlists_v3';
+const ACTIVE_LIST_KEY = 'bt_active_watchlist';
+
+const newListId = () => `wl-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+function loadWatchlists() {
+  const saved = LOAD(WATCHLIST_KEY, null);
+  if (Array.isArray(saved) && saved.length) {
+    return saved
+      .map((l, i) => ({
+        id: l.id || `wl-${i + 1}`,
+        name: l.name || `Watchlist ${i + 1}`,
+        symbols: Array.isArray(l.symbols) ? l.symbols : [],
+      }));
+  }
+  // Migrate the old single-list format. Extra tabs from the old (buggy)
+  // 'kite_lists_v2' key shared one stock array, so they are intentionally dropped.
+  const legacy = LOAD('bt_watchlist', WATCHED_DEFAULT);
+  return [{
+    id: 'wl-1',
+    name: 'Watchlist 1',
+    symbols: Array.isArray(legacy) && legacy.length ? legacy : WATCHED_DEFAULT,
+  }];
+}
 
 export default function App() {
-  // ── Auth state ──────────────────────────────────────────────────────────────
+  // â”€â”€ Auth state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [user, setUser]         = useState(() => LOAD('bt_user', null));
   const [token, setToken]       = useState(() => localStorage.getItem('bt_token'));
   const [subStatus, setSubStatus] = useState(null); // { active, reason, subscription, plan, balance }
   const [subLoading, setSubLoading] = useState(!!token);
+  const [showAuth, setShowAuth] = useState(false);
 
-  // ── Market state ─────────────────────────────────────────────────────────────
+  // Verify the persisted session on mount; clear stale/invalid tokens so the
+  // user is sent back to the landing page instead of a half-broken session.
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    api.getMe()
+      .then((u) => { if (!cancelled && u) setUser(u); })
+      .catch(() => {
+        if (cancelled) return;
+        try { localStorage.removeItem('bt_token'); } catch { /* ignore */ }
+        setUser(null); setToken(null);
+      });
+    return () => { cancelled = true; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // â”€â”€ Market state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [quotes, setQuotes]     = useState({});
   const [marketDepth, setMarketDepth] = useState({});
   const [marketLoading, setMarketLoading] = useState(true);
   const [marketStatus, setMarketStatus] = useState(getMarketStatus());
 
-  // ── Trading state ────────────────────────────────────────────────────────────
+  // â”€â”€ Trading state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [balance, setBalance]   = useState(() => LOAD('bt_balance', 100000));
   const [holdings, setHoldings] = useState(() => LOAD('bt_holdings', {}));
   const [trades, setTrades]     = useState(() => LOAD('bt_trades', []));
-  const [watchlist, setWatchlist] = useState(() => LOAD('bt_watchlist', WATCHED_DEFAULT));
+  const [watchlists, setWatchlists] = useState(loadWatchlists);
+  const [activeListId, setActiveListId] = useState(() => LOAD(ACTIVE_LIST_KEY, 'wl-1'));
+  const activeList = watchlists.find(l => l.id === activeListId) || watchlists[0];
+  const watchlist = useMemo(() => activeList?.symbols || [], [activeList]);
 
-  // ── Navigation ────────────────────────────────────────────────────────────────
+  // â”€â”€ Navigation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [activePage, setActivePage] = useState('dashboard'); // Kite parity: Dashboard is home
-  const [chartTarget, setChartTarget] = useState(null); // { symbol, symbolData } — opens full-screen chart
+  const [chartTarget, setChartTarget] = useState(null); // { symbol, symbolData } â€” opens full-screen chart
 
-  // ── Toast ─────────────────────────────────────────────────────────────────────
+  // â”€â”€ Toast â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [toast, setToast]       = useState(null);
   const showToast = useCallback((msg, type = 'success') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 4000);
   }, []);
 
-  // ── Load subscription status on boot ─────────────────────────────────────────
+  // â”€â”€ Load subscription status on boot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
     if (!token) { setSubLoading(false); return; }
     api.getSubStatus()
@@ -89,18 +137,18 @@ export default function App() {
       .finally(() => setSubLoading(false));
   }, [token]);
 
-  // ── Market clock ─────────────────────────────────────────────────────────────
+  // â”€â”€ Market clock â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
     const iv = setInterval(() => setMarketStatus(getMarketStatus()), 30000);
     return () => clearInterval(iv);
   }, []);
 
-  // ── Market data WebSockets + OMS Fill Notifications ───────────────────
+  // â”€â”€ Market data WebSockets + OMS Fill Notifications â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const socketRef = useRef(null);
 
   // Canonical feed symbol: server broadcasts on the Yahoo-suffixed room
   // (getQuote('RELIANCE') returns tradingSymbol 'RELIANCE.NS'). Subscribing
-  // with the bare symbol joins a room that never receives ticks — that was
+  // with the bare symbol joins a room that never receives ticks â€” that was
   // why the dashboard watchlist stayed empty while indices (^NSEI) worked.
   const toFeedSym = (s) => {
     if (!s) return s;
@@ -109,7 +157,12 @@ export default function App() {
     return s.endsWith('.BO') ? `${base}.BO` : `${base}.NS`;
   };
   const baseSym = (s) => (s || '').replace('.NS', '').replace('.BO', '');
-  const feedSymbols = () => [...INDICES, ...watchlist].map(toFeedSym);
+  const feedSymbols = () => [...new Set([
+    ...INDICES,
+    ...watchlists.flatMap(l => l.symbols || []),
+    ...Object.keys(holdings || {}),
+    ...(chartTarget?.symbol ? [chartTarget.symbol] : []),
+  ])].map(toFeedSym);
 
   // Store every tick under BOTH the feed key and the bare base key so all
   // consumers (watchlist, positions, quote header) find it either way.
@@ -127,47 +180,50 @@ export default function App() {
 
   // REST bootstrap + safety-net poll: instant data on login even before the
   // first WS tick, and recovery if the socket drops silently.
+  // Runs for every signed-in user - market data is never subscription-gated.
   useEffect(() => {
-    if (!user || !subStatus?.active) return;
+    if (!user) return;
     let alive = true;
     const bootstrap = async () => {
       try {
-        const qs = await api.getQuotes(feedSymbols().join(','));
+        const syms = feedSymbols();
+        if (!syms.length) return;
+        const qs = await api.getQuotes(syms.join(','));
         if (!alive || !qs) return;
         (Array.isArray(qs) ? qs : [qs]).forEach(storeQuote);
         setMarketLoading(false);
-      } catch {}
+      } catch { /* keep last known quotes; socket will retry */ }
     };
     bootstrap();
     const iv = setInterval(bootstrap, 60000);
     return () => { alive = false; clearInterval(iv); };
-  }, [user, subStatus?.active, watchlist.join(',')]); // eslint-disable-line
+  }, [user, watchlists, holdings]); // eslint-disable-line
 
   useEffect(() => {
-    if (!user || !subStatus?.active) return;
+    if (!user) return;
 
     const socket = io('http://localhost:5000', { withCredentials: true });
     socketRef.current = socket;
 
     socket.on('connect', () => {
       setMarketLoading(false);
-      // Subscribe with canonical feed symbols (RELIANCE.NS, ^NSEI, …)
+      // Subscribe with canonical feed symbols (RELIANCE.NS, ^NSEI, â€¦)
       socket.emit('subscribe:quotes', feedSymbols());
       // Join user-private room with JWT for secure auth (v2 security fix)
       const jwtToken = localStorage.getItem('bt_token');
       if (jwtToken) socket.emit('auth:join', jwtToken);
     });
 
-    // Market data push — stored under feed key AND bare base key
+    // Market data push â€” stored under feed key AND bare base key
     socket.on('quotes:update', storeQuote);
 
     // Market depth (L2) update
     socket.on('depth:update', ({ symbol, depth }) => storeDepth(symbol, depth));
 
-    // OMS push: order filled — re-sync authoritative state from server
+    // OMS push: order filled â€” re-sync authoritative state from server
     socket.on('order:filled', (fill) => {
-      const costStr = fill.costs?.totalCost ? ` (charges: ₹${fill.costs.totalCost})` : '';
-      showToast(`✅ ${fill.side.toUpperCase()} ${fill.quantity} × ${fill.symbol} @ ₹${Number(fill.price).toLocaleString('en-IN')} — Block #${fill.blockIndex}${costStr}`);
+      const costStr = fill.costs?.totalCost ? ` (charges: â‚¹${fill.costs.totalCost})` : '';
+      showToast(`âœ… ${fill.side.toUpperCase()} ${fill.quantity} Ã— ${fill.symbol} @ â‚¹${Number(fill.price).toLocaleString('en-IN')} â€” Block #${fill.blockIndex}${costStr}`);
       api.getSubStatus().then(status => {
         if (Number.isFinite(Number(status.balance))) setBalance(Number(status.balance));
         if (status.holdings) setHoldings(status.holdings);
@@ -178,48 +234,81 @@ export default function App() {
 
     // Alert fired
     socket.on('alert:fired', (alert) => {
-      showToast(`🔔 Alert: ${alert.message}`, 'info');
+      showToast(`ðŸ”” Alert: ${alert.message}`, 'info');
     });
 
     // Heartbeat pong
     socket.on('server:ping', () => socket.emit('client:pong'));
 
     return () => { socket.disconnect(); };
-  }, [user, subStatus?.active]);
+  }, [user]);
 
-  // Update subscription when watchlist changes
+  // Global keyboard shortcuts (BlockTrade master spec):
+  //   G+H -> Home (dashboard)      G+P -> Portfolio
+  //   G+C -> Open full-screen chart   /  -> focus global search
+  useEffect(() => {
+    let gTimer = null;
+    const onKey = (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target;
+      const typing = !!(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable));
+      if (e.key === '/') {
+        if (typing) return;
+        e.preventDefault();
+        const inp = document.querySelector('.topbar-search input');
+        if (inp) { inp.focus(); inp.select?.(); }
+        return;
+      }
+      const k = e.key.toLowerCase();
+      if (k === 'g') { gTimer = setTimeout(() => { gTimer = null; }, 1500); return; }
+      const map = { h: 'dashboard', p: 'portfolio', c: 'chart' };
+      const page = map[k];
+      if (gTimer) {
+        clearTimeout(gTimer);
+        gTimer = null;
+        e.preventDefault();
+        const p = map[k];
+        if (p === 'chart') setChartTarget({ symbol: 'NIFTY 50', symbolData: null });
+        else setActivePage(p);
+      }
+    };
+    const onKeyUp = (e) => { if (e.key && e.key.toLowerCase() !== 'g') gTimer = null; };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('keyup', onKeyUp);
+    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKeyUp); };
+  }, []);
+
+  // Update subscription when any watchlist or holdings changes
   useEffect(() => {
     if (socketRef.current && socketRef.current.connected) {
       socketRef.current.emit('subscribe:quotes', feedSymbols());
     }
-  }, [watchlist]);
+  }, [watchlists, holdings]); // eslint-disable-line
 
-  // ── Persist to localStorage ───────────────────────────────────────────────────
+  // â”€â”€ Persist to localStorage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => { SAVE('bt_user', user); }, [user]);
   useEffect(() => { SAVE('bt_balance', balance); }, [balance]);
   useEffect(() => { SAVE('bt_holdings', holdings); }, [holdings]);
   useEffect(() => { SAVE('bt_trades', trades); }, [trades]);
+  useEffect(() => {
+    SAVE(WATCHLIST_KEY, watchlists);
+    if (!watchlists.some(l => l.id === activeListId)) setActiveListId(watchlists[0]?.id);
+  }, [watchlists, activeListId]);
+  useEffect(() => { SAVE(ACTIVE_LIST_KEY, activeListId); }, [activeListId]);
   useEffect(() => { SAVE('bt_watchlist', watchlist); }, [watchlist]);
 
-  // ── Handlers ──────────────────────────────────────────────────────────────────
+  // â”€â”€ Handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleAuth = (u, t) => { setUser(u); setToken(t); setSubLoading(true); };
   const handleLogout = () => {
     localStorage.clear();
+    api.logout().catch(() => {});
     setUser(null); setToken(null); setSubStatus(null);
     setBalance(0); setHoldings({}); setTrades([]);
   };
 
-  const handleSubscribed = (sub) => {
-    setSubStatus({ active: true, subscription: sub });
-    setBalance(sub.virtualBalance);
-    setHoldings({}); setTrades([]);
-    showToast(`🎉 ${sub.planName} activated! ₹${sub.virtualBalance.toLocaleString('en-IN')} virtual capital ready.`);
-  };
-
-  const executeTrade = async ({ type, symbol, quantity, price, orderType = 'market', productType = 'DELIVERY' }) => {
-    // Generate idempotency key to prevent duplicate orders on retry
+  const executeTrade = async ({ type, symbol, quantity, price, orderType = 'market', productType = 'DELIVERY', stopLoss, target }) => {
     const idempotencyKey = `${user.id}-${symbol}-${type}-${quantity}-${price}-${Date.now()}`;
-    const result = await api.executeTrade({ type, symbol, quantity, price, orderType, productType, idempotencyKey });
+    const result = await api.executeTrade({ type, symbol, quantity, price, orderType, productType, stopLoss, target, idempotencyKey });
 
     if (!result.success && result.violations) {
       throw new Error(result.violations[0]?.message || 'Order rejected by risk engine');
@@ -228,8 +317,10 @@ export default function App() {
     // Dual-Chain Execution: Record on Ethereum/Sepolia via MetaMask (optional)
     try {
       const { recordTradeOnChain } = await import('./services/web3');
-      const ethTxHash = await recordTradeOnChain(symbol, quantity, price, type, result?.trade?.blockHash);
-      console.log('Recorded on Ethereum. TxHash:', ethTxHash);
+      const ethRes = await recordTradeOnChain(symbol, quantity, price, type, result?.trade?.blockHash);
+      const ethTxHash = typeof ethRes === 'string' ? ethRes : ethRes?.hash;
+      if (ethRes?.simulated) console.log('Trade simulated on-chain (no contract deployed). TxHash:', ethTxHash);
+      else console.log('Recorded on Ethereum. TxHash:', ethTxHash);
     } catch (err) {
       console.warn('MetaMask trade sync failed or skipped:', err.message);
     }
@@ -237,69 +328,112 @@ export default function App() {
     return result;
   };
 
-  const handleAddWatch  = (s) => setWatchlist(prev => prev.includes(s) ? prev : [...prev, s]);
-  const handleRemWatch  = (s) => setWatchlist(prev => prev.filter(x => x !== s));
+  const updateList = (id, fn) => setWatchlists(prev => prev.map(l => (l.id === id ? fn(l) : l)));
+  const handleAddWatch = (raw) => {
+    const s = String(raw || '').toUpperCase().replace('.NS', '').replace('.BO', '');
+    if (!s) return;
+    updateList(activeList?.id, l => (l.symbols.includes(s) ? l : { ...l, symbols: [...l.symbols, s] }));
+  };
+  const handleRemWatch = (s) => {
+    updateList(activeList?.id, l => ({ ...l, symbols: l.symbols.filter(x => x !== s) }));
+  };
+  const handleAddList = (name) => {
+    const id = newListId();
+    const title = String(name || '').trim() || `Watchlist ${watchlists.length + 1}`;
+    setWatchlists(prev => [...prev, { id, name: title.slice(0, 24), symbols: [] }]);
+    setActiveListId(id);
+  };
+  const handleRenameList = (id, name) => {
+    const title = String(name || '').trim().slice(0, 24);
+    if (!title) return;
+    updateList(id, l => ({ ...l, name: title }));
+  };
+  const handleDeleteList = (id) => {
+    if (watchlists.length <= 1) return;
+    const next = watchlists.filter(l => l.id !== id);
+    setWatchlists(next);
+    if (activeListId === id) setActiveListId(next[0].id);
+  };
 
-  // ── Open chart ────────────────────────────────────────────────────────────────
+  // â”€â”€ Open chart â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const openChart = (symbol, symbolData) => setChartTarget({ symbol, symbolData });
 
-  // ═══════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // RENDER LOGIC
-  // ═══════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   // 1) Loading initial sub status
   if (subLoading) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--bg-base)', flexDirection: 'column', gap: 16 }}>
         <div className="spinner" style={{ width: 36, height: 36, borderWidth: 4 }} />
-        <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Loading BlockTrade…</div>
+        <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Loading BlockTradeâ€¦</div>
       </div>
     );
   }
 
-  // 2) Not logged in → Auth
-  if (!user || !token) return <AuthPage onAuth={handleAuth} />;
-
-  // 3) No active subscription → Subscription page
-  if (!subStatus?.active) {
-    return (
-      <SubscriptionPage
-        user={user}
-        reason={subStatus?.reason}
-        onSubscribed={handleSubscribed}
-        onLogout={handleLogout}
-      />
-    );
+  // 2) Not logged in â†’ Auth
+  if (!user || !token) {
+    if (showAuth) {
+      return <AuthPage onAuth={(u, t) => { setUser(u); setToken(t); setSubLoading(true); }} />;
+    }
+    return <LandingPage onGetStarted={() => setShowAuth(true)} />;
   }
 
-  // ── Balance warnings ──────────────────────────────────────────────────────
+  // 3) Subscription status is informational, never a wall.
+
+  // â”€â”€ Balance warnings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const balanceWarn = getBalanceWarning(balance, subStatus?.subscription?.initialBalance || balance);
 
-  // ── Page map ─────────────────────────────────────────────────────────────
+  // â”€â”€ Page map â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Kite parity: Dashboard (watchlist+chart+depth+dock) is home; Trade Desk keeps legacy desk
-  const exitPosition = (sym, ltp, qty) => {
+  const exitPosition = (sym) => {
     setActivePage('dashboard');
     showToast(`Exit ${sym} from Positions dock below the chart`, 'info');
   };
   const pages = {
-    dashboard:  <DashboardPage quotes={quotes} marketDepth={marketDepth} watchlist={watchlist} onAddWatch={handleAddWatch} onRemoveWatch={handleRemWatch} holdings={holdings} balance={balance} onTrade={executeTrade} onOpenChart={openChart} />,
+    dashboard:  <DashboardPage
+      quotes={quotes}
+      marketDepth={marketDepth}
+      watchlists={watchlists}
+      activeListId={activeList?.id}
+      onAddWatch={handleAddWatch}
+      onRemoveWatch={handleRemWatch}
+      onAddList={handleAddList}
+      onRenameList={handleRenameList}
+      onDeleteList={handleDeleteList}
+      onSelectList={setActiveListId}
+      holdings={holdings}
+      balance={balance}
+      onTrade={executeTrade}
+      onOpenChart={openChart}
+      onNav={setActivePage}
+    />,
     market:     <MarketPage   quotes={quotes} marketStatus={marketStatus} marketLoading={marketLoading} onOpenChart={openChart} />,
     trade:      <TradePage    quotes={quotes} holdings={holdings} balance={balance} onTrade={executeTrade} watchlist={watchlist} onAddWatch={handleAddWatch} marketDepth={marketDepth} />,
     portfolio:  <PortfolioPage holdings={holdings} quotes={quotes} balance={balance} initialBalance={subStatus?.subscription?.initialBalance || balance} onTrade={executeTrade} />,
     positions:  <><SessionBanner /><PositionsBook quotes={quotes} onExit={exitPosition} /></>,
     funds:      <FundsPage balance={balance} quotes={quotes} holdings={holdings} showToast={showToast} />,
+    settings:   <div style={{ maxWidth: 980 }}>
+      <h2 style={{ fontSize: 18, fontWeight: 800, margin: '0 0 14px' }}>Settings</h2>
+      <DhanFeedSettings pushToast={showToast} />
+    </div>,
     ledger:     <LedgerPage />,
     pnl:        <PnlPage />,
-    basket:     <BasketPage showToast={showToast} />,
     blockchain: <BlockchainExplorer trades={trades} />,
     orders:     <OrdersPage />,
     news:       <NewsPage />,
     options:    <OptionChainPage symbol="^NSEI" onTrade={executeTrade} balance={balance} quotes={quotes} holdings={holdings} />,
-    screener:   <ScreenerPage openChart={openChart} executeTrade={executeTrade} />,
     journal:    <JournalPage showToast={showToast} />,
-    risk:       <RiskAdvisorPage holdings={holdings} quotes={quotes} />,
     backtest:   <BacktestPage showToast={showToast} />,
-    terminal:   <TerminalPage quotes={quotes} marketDepth={marketDepth} onTrade={executeTrade} balance={balance} user={user} />,
+    'ai-dashboard': <AIDashboard watchlist={watchlist} holdings={holdings} quotes={quotes} />,
+    'strategy-builder': <StrategyBuilder spot={quotes['^NSEI']?.price || 0} underlying="NIFTY" onTrade={executeTrade} balance={balance} quotes={quotes} />,
+    'analytics': <PortfolioAnalytics holdings={holdings} balance={balance} initialBalance={subStatus?.subscription?.initialBalance || balance} quotes={quotes} />,
+    'alerts': <PriceAlerts quotes={quotes} watchlist={watchlist} showToast={showToast} />,
+    'legal-disclaimer': <DisclaimerPage />,
+    'legal-privacy': <PrivacyPolicyPage />,
+    'legal-terms': <TermsOfServicePage />,
+    'legal-dpdp': <DpdpPage />,
   };
 
   return (
@@ -312,7 +446,7 @@ export default function App() {
           color: '#fff', fontSize: 12, fontWeight: 700,
           padding: '6px 20px', textAlign: 'center',
         }}>
-          ⚠️ {balanceWarn.message}
+          âš ï¸ {balanceWarn.message}
           {balanceWarn.level === 'critical' && (
             <button onClick={() => { setSubStatus(null); }} style={{ marginLeft: 12, background: '#fff', color: '#dc2626', border: 'none', padding: '2px 10px', borderRadius: 99, fontSize: 11, cursor: 'pointer', fontWeight: 700 }}>
               Renew Subscription
@@ -350,6 +484,7 @@ export default function App() {
             watchlist={watchlist}
             onAddWatch={handleAddWatch}
             onRemWatch={handleRemWatch}
+            quotes={quotes}
           />
         </ErrorBoundary>
       )}
@@ -369,7 +504,14 @@ export default function App() {
       >
         <ErrorBoundary key={activePage}>
           <div className="page-content fade-in-up" style={{ marginTop: balanceWarn ? 32 : 0 }}>
-            {pages[activePage] || pages.dashboard}
+            <Suspense fallback={(
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 60, flexDirection: 'column', gap: 12 }}>
+                <div className="spinner" style={{ width: 28, height: 28, borderWidth: 3 }} />
+                <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>Loading page…</div>
+              </div>
+            )}>
+              {pages[activePage] || pages.dashboard}
+            </Suspense>
           </div>
         </ErrorBoundary>
       </BrokerShell>
