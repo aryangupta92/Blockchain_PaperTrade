@@ -78,7 +78,7 @@ function PayoffChart({ leg, spot, step }) {
   );
 }
 
-export default function OptionChainPage({ symbol = '^NSEI', inModal = false, onTrade, balance, quotes = {}, holdings = {} }) {
+export default function OptionChainPage({ symbol = '^NSEI', inModal = false, onTrade, quotes = {} }) {
   // Resolve initial underlying from incoming symbol
   const initialU = useMemo(() => {
     const s = String(symbol).toUpperCase();
@@ -135,7 +135,10 @@ export default function OptionChainPage({ symbol = '^NSEI', inModal = false, onT
     // eslint-disable-next-line
   }, [underlying]);
 
-  useEffect(() => { if (serverExpiry) fetchChain(serverExpiry); /* eslint-disable-line */ }, [serverExpiry]);
+  useEffect(() => {
+    if (serverExpiry && serverExpiry !== chain?.expiry) fetchChain(serverExpiry);
+    // eslint-disable-next-line
+  }, [serverExpiry, chain?.expiry]);
 
   // Keep local DDMMMYY in sync for OMS symbol building
   useEffect(() => {
@@ -258,6 +261,14 @@ export default function OptionChainPage({ symbol = '^NSEI', inModal = false, onT
             })}
           </select>
           <button className="btn btn-ghost" style={{ padding: '4px 8px', fontSize: 11 }} onClick={() => fetchChain(serverExpiry)}><RefreshCw size={12} /></button>
+          {chain && (
+            <span
+              className={`oc-source ${chain.estimated ? 'estimated' : 'live'}`}
+              title={chain.notice || (chain.estimated ? 'Model-generated values - not exchange data' : `Real option chain from ${chain.source}`)}
+            >
+              {chain.estimated ? 'MODEL · ESTIMATED' : `${chain.source || 'EXCHANGE'} · EXCHANGE`}
+            </span>
+          )}
         </div>
       </div>
 
@@ -283,6 +294,13 @@ export default function OptionChainPage({ symbol = '^NSEI', inModal = false, onT
         </div>
       ) : (
         <>
+          {chain.estimated && (
+            <div className="oc-model-warning">
+              <ShieldAlert size={14} />
+              <span>{chain.notice || 'Model-generated premiums, OI and volume. Not exchange data.'}</span>
+            </div>
+          )}
+
           {/* Summary stats */}
           <div className="oc-summary">
             <div className="oc-stat"><div className="oc-stat-label">Spot (LTP)</div><div className="oc-stat-val gain">{fmt(spot)}</div></div>

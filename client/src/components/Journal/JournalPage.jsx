@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../../services/api';
 import { Target, BarChart2, Zap, Brain, TrendingUp, TrendingDown, RefreshCw, User, Link } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import InvestRecommendationCard from './InvestRecommendationCard';
 
 export default function JournalPage({ showToast }) {
   const [entries, setEntries] = useState([]);
@@ -52,9 +53,30 @@ export default function JournalPage({ showToast }) {
       });
       showToast('Journal entry saved!', 'success');
       setShowModal(false);
+      setDraftScore(null);
       fetchEntries();
     } catch (err) {
       showToast(err.message, 'error');
+    }
+  };
+
+  // Phase 3: score the draft for biases BEFORE saving
+  const [draftScore, setDraftScore] = useState(null);
+  const [draftScoring, setDraftScoring] = useState(false);
+  const scoreDraft = async () => {
+    setDraftScoring(true);
+    try {
+      const res = await api.scoreBias({
+        ...formData,
+        riskRewardPlanned: Number(formData.riskRewardPlanned) || null,
+        riskRewardActual: Number(formData.riskRewardActual) || null,
+        text: [formData.title, formData.setup, formData.thesis, formData.mistakes, formData.learnings].filter(Boolean).join(' '),
+      });
+      setDraftScore(res);
+    } catch (err) {
+      showToast('Bias check failed', 'error');
+    } finally {
+      setDraftScoring(false);
     }
   };
 
@@ -119,6 +141,7 @@ export default function JournalPage({ showToast }) {
       </div>
 
       {/* Bias Coach Report Card */}
+      <InvestRecommendationCard showToast={showToast} />
       {biasReport && (
         <div className="card" style={{ padding: 24, marginBottom: 24, background: 'rgba(99, 102, 241, 0.05)', border: '1px solid rgba(99, 102, 241, 0.3)' }}>
           <h3 style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--accent-primary)', marginBottom: 16 }}>
@@ -318,8 +341,30 @@ export default function JournalPage({ showToast }) {
               </div>
             </div>
 
+            {/* Phase 3: pre-save bias check */}
+            {draftScore && (
+              <div style={{ marginTop: 16, padding: 14, borderRadius: 8, background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.35)' }}>
+                <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 8 }}>Bias check before saving</div>
+                {(draftScore.rules || []).length === 0 && <div style={{ fontSize: 12, color: 'var(--gain)' }}>No bias flags on this draft. Clean process.</div>}
+                {(draftScore.rules || []).map((r, i) => (
+                  <div key={i} style={{ fontSize: 12, marginBottom: 6, lineHeight: 1.5 }}>
+                    <strong style={{ color: '#f59e0b' }}>{r.name}</strong>
+                    <div style={{ color: 'var(--text-secondary)' }}>{r.fix}</div>
+                  </div>
+                ))}
+                {draftScore.tone && draftScore.tone.label !== 'neutral' && (
+                  <div style={{ fontSize: 12, marginTop: 4, color: 'var(--text-muted)' }}>
+                    Draft tone: <strong>{draftScore.tone.label}</strong> ({draftScore.tone.score})
+                  </div>
+                )}
+              </div>
+            )}
+
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 24 }}>
               <button className="btn btn-outline" onClick={() => setShowModal(false)}>Cancel</button>
+              <button className="btn btn-outline" onClick={scoreDraft} disabled={draftScoring} style={{ borderColor: '#f59e0b', color: '#f59e0b' }}>
+                {draftScoring ? 'Checking...' : 'Check biases'}
+              </button>
               <button className="btn btn-primary" onClick={handleSave}>Save Entry</button>
             </div>
           </div>

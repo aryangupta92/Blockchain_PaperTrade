@@ -1,21 +1,11 @@
 import { useEffect, useState, useRef } from 'react';
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
 import { Maximize2 } from 'lucide-react';
+import api from '../../services/api';
 
 function fmtPrice(n) {
   if (!n) return '—';
   return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function makeSparkData(changePercent) {
-  const pts = 20;
-  const data = [];
-  let val = 100;
-  for (let i = 0; i < pts; i++) {
-    val += (Math.random() - (changePercent < 0 ? 0.55 : 0.45)) * 1.5;
-    data.push({ v: parseFloat(val.toFixed(2)) });
-  }
-  return data;
 }
 
 export default function IndexHeroCard({ label, quote, loading, onClick, active, onFullScreen }) {
@@ -23,10 +13,34 @@ export default function IndexHeroCard({ label, quote, loading, onClick, active, 
   const safeChgAbs = Number.isFinite(Number(quote?.change)) ? Number(quote.change) : 0;
   const isGain    = safeChgPct >= 0;
   const color     = isGain ? 'var(--gain)' : 'var(--loss)';
-  const sparkData = quote ? makeSparkData(safeChgPct) : [];
-  
+
+  const [sparkData, setSparkData] = useState([]);
+  const [breadth, setBreadth] = useState(null);
   const [flash, setFlash] = useState('');
   const prevPrice = useRef(quote?.price);
+
+  // Fetch real intraday candles for sparkline
+  useEffect(() => {
+    if (!quote?.symbol) return;
+    let alive = true;
+    api.getCandles(quote.symbol, '1d', '5m')
+      .then(data => {
+        if (!alive || !data?.length) return;
+        const pts = data.slice(-30).map(c => ({ v: c.close }));
+        setSparkData(pts);
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [quote?.symbol]);
+
+  // Fetch real breadth for advances/declines
+  useEffect(() => {
+    let alive = true;
+    api.getMarketBreadth()
+      .then(d => { if (alive && d) setBreadth(d); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   useEffect(() => {
     if (quote?.price && prevPrice.current && quote.price !== prevPrice.current) {
@@ -38,17 +52,17 @@ export default function IndexHeroCard({ label, quote, loading, onClick, active, 
     prevPrice.current = quote?.price;
   }, [quote?.price]);
 
-  // Determine simulated adv/dec ratio based on changePercent
-  const chg = safeChgPct;
-  let advPct = 50 + (chg * 20); // arbitrary but looks realistic
-  advPct = Math.max(0, Math.min(100, advPct));
-  const decPct = 100 - advPct;
+  const advPct = breadth?.advances != null && breadth?.total > 0
+    ? (breadth.advances / breadth.total) * 100
+    : 50;
+  const decPct = breadth?.declines != null && breadth?.total > 0
+    ? (breadth.declines / breadth.total) * 100
+    : 50;
 
   return (
     <div className={`index-hero-card ${active ? 'active' : ''} ${flash}`} onClick={onClick}>
       <div className="hero-label">{label}</div>
 
-      {/* Full-screen button */}
       {onFullScreen && (
         <button
           className="hero-fullscreen"
@@ -80,12 +94,12 @@ export default function IndexHeroCard({ label, quote, loading, onClick, active, 
               </ResponsiveContainer>
             </div>
           )}
-          
-          {/* Advances & Declines Bar */}
+
+          {/* Real Advances & Declines from breadth API */}
           <div style={{ marginTop: 12 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, fontWeight: 700, marginBottom: 4 }}>
-              <span className="gain">{advPct.toFixed(2)}%<br/><span style={{fontSize: 9, opacity: 0.7}}>Adv</span></span>
-              <span className="loss" style={{textAlign:'right'}}>{decPct.toFixed(2)}%<br/><span style={{fontSize: 9, opacity: 0.7}}>Dec</span></span>
+              <span className="gain">{advPct.toFixed(1)}%<br/><span style={{fontSize: 9, opacity: 0.7}}>Adv {breadth?.advances ?? '—'}</span></span>
+              <span className="loss" style={{textAlign:'right'}}>{decPct.toFixed(1)}%<br/><span style={{fontSize: 9, opacity: 0.7}}>Dec {breadth?.declines ?? '—'}</span></span>
             </div>
             <div style={{ display: 'flex', height: 3, borderRadius: 2, background: 'var(--loss)', overflow: 'hidden' }}>
               <div style={{ width: `${advPct}%`, background: 'var(--gain)' }} />

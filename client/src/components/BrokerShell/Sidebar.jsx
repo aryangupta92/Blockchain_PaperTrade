@@ -1,6 +1,8 @@
 import { TrendingUp, BarChart2, Briefcase, Link, ClipboardList,
-         Newspaper, Target, HelpCircle, Settings, Zap, ShieldAlert, FlaskConical,
-         LayoutDashboard, Wallet, BookText, PieChart, ShoppingBasket, Activity } from 'lucide-react';
+         Newspaper, Target, HelpCircle, Settings, Zap, FlaskConical,
+         LayoutDashboard, Wallet, BookText, PieChart, Activity, Brain,
+         Bell, GitBranch } from 'lucide-react';
+import BrandLogo from './BrandLogo';
 
 
 const NAV = [
@@ -10,22 +12,22 @@ const NAV = [
     { id: 'portfolio', icon: Briefcase,     label: 'Holdings',      badge: null },
     { id: 'positions', icon: Activity,      label: 'Positions',     badge: null },
     { id: 'funds',     icon: Wallet,        label: 'Funds',         badge: null },
+    { id: 'alerts',    icon: Bell,          label: 'Price Alerts',  badge: 'NEW' },
   ]},
   { section: 'MARKET', items: [
     { id: 'market',    icon: TrendingUp,    label: 'Market',        badge: null },
     { id: 'options',   icon: Target,        label: 'Option Chain',  badge: null },
-    { id: 'screener',  icon: Target,        label: 'Screener',      badge: 'NEW' },
-    { id: 'basket',    icon: ShoppingBasket, label: 'Baskets',      badge: 'NEW' },
+    { id: 'strategy-builder', icon: GitBranch, label: 'Strategy Builder', badge: 'PRO' },
     { id: 'news',      icon: Newspaper,     label: 'News & Events', badge: null },
   ]},
   { section: 'REPORTS', items: [
     { id: 'ledger',    icon: BookText,      label: 'Ledger',        badge: null },
     { id: 'pnl',       icon: PieChart,      label: 'P&L / Tax',     badge: null },
+    { id: 'analytics', icon: TrendingUp,    label: 'Analytics',     badge: 'NEW' },
     { id: 'trade',     icon: Target,        label: 'Trade Desk',    badge: null },
-    { id: 'terminal',  icon: Zap,           label: 'Pro Terminal',  badge: 'LIVE' },
   ]},
   { section: 'TOOLS', items: [
-    { id: 'risk',      icon: ShieldAlert,   label: 'Risk Advisor',  badge: 'AI' },
+    { id: 'ai-dashboard', icon: Brain,      label: 'AI Dashboard',  badge: 'NEW' },
     { id: 'journal',   icon: BarChart2,     label: 'Trade Journal', badge: 'AI' },
     { id: 'backtest',  icon: FlaskConical,  label: 'Backtester',    badge: 'AI' },
     { id: 'blockchain', icon: Link,         label: 'Block Explorer', badge: null },
@@ -33,6 +35,7 @@ const NAV = [
 ];
 
 export default function Sidebar({ activePage, onNav, subscription, user }) {
+  const go = (id) => onNav?.(id);
   const tradesLeft = subscription
     ? subscription.maxTrades < 0 ? '∞' : subscription.maxTrades - subscription.tradesUsed
     : 0;
@@ -41,7 +44,7 @@ export default function Sidebar({ activePage, onNav, subscription, user }) {
     <aside className="sidebar">
       {/* Brand */}
       <div className="sidebar-brand">
-        <div className="sidebar-logo">B</div>
+        <BrandLogo size={34} className="sidebar-brand-mark" />
         <div>
           <div className="sidebar-brand-name">BlockTrade</div>
           <div className="sidebar-brand-sub">PAPER TRADING</div>
@@ -53,6 +56,7 @@ export default function Sidebar({ activePage, onNav, subscription, user }) {
         {NAV.map(({ section, items }) => (
           <div key={section} className="sidebar-section">
             <div className="sidebar-section-label">{section}</div>
+            {/* eslint-disable-next-line no-unused-vars */}
             {items.map(({ id, icon: Icon, label, badge }) => (
               <button
                 key={id}
@@ -107,8 +111,8 @@ export default function Sidebar({ activePage, onNav, subscription, user }) {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-          <button className="sidebar-icon-btn" title="Help"><HelpCircle size={14} /></button>
-          <button className="sidebar-icon-btn" title="Settings"><Settings size={14} /></button>
+          <button className="sidebar-icon-btn" title="Help & data feed" onClick={() => go('settings')}><HelpCircle size={14} /></button>
+          <button className="sidebar-icon-btn" title="Settings" onClick={() => go('settings')}><Settings size={14} /></button>
         </div>
       </div>
     </aside>

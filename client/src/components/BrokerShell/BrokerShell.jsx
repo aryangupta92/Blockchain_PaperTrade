@@ -8,7 +8,7 @@ export default function BrokerShell({ children, activePage, onNav, balance, quot
     <div className="broker-shell">
       <Sidebar activePage={activePage} onNav={onNav} subscription={subscription} user={user} />
       <div className="shell-main">
-        <TopBar balance={balance} quotes={quotes} marketStatus={marketStatus} user={user} onLogout={onLogout} onOpenChart={onOpenChart} onNav={onNav} activePage={activePage} />
+        <TopBar balance={balance} marketStatus={marketStatus} user={user} onLogout={onLogout} onOpenChart={onOpenChart} onNav={onNav} />
         <TickerStrip quotes={quotes} loading={marketLoading} />
         <main className="shell-content">
           {children}

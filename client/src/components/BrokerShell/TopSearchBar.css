@@ -1,8 +1,37 @@
 .top-search-wrapper {
   position: relative;
-  flex: 1;
-  max-width: 480px;
-  margin: 0 24px;
+  width: 100%;
+  max-width: 440px;
+  min-width: 200px;
+  margin: 0 auto;
+}
+
+.top-search-wrapper.is-open {
+  max-width: 440px;
+}
+
+.top-search-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.top-search-toggle:hover {
+  color: var(--text-primary);
+  border-color: var(--accent-primary);
+  background: var(--bg-surface);
 }
 
 .top-search-box {
@@ -11,9 +40,29 @@
   background: var(--bg-card);
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  padding: 0 12px;
-  height: 40px;
+  padding: 0 10px 0 12px;
+  height: 36px;
   transition: all 0.2s ease;
+  animation: searchExpand 0.16s ease;
+}
+
+.top-search-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  padding: 4px;
+  margin-left: 4px;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.top-search-close:hover { color: var(--text-primary); background: rgba(255,255,255,0.06); }
+
+@keyframes searchExpand {
+  from { opacity: 0; transform: scaleX(0.85); transform-origin: left; }
+  to { opacity: 1; transform: scaleX(1); transform-origin: left; }
 }
 
 .top-search-box:focus-within {
@@ -28,11 +77,17 @@
 
 .top-search-input {
   flex: 1;
+  min-width: 0;
   background: transparent;
   border: none;
   color: var(--text-base);
-  font-size: 14px;
+  font-size: 12.5px;
   outline: none;
+}
+
+@media (max-width: 760px) {
+  .top-search-toggle span { display: none; }
+  .top-search-wrapper { max-width: none; }
 }
 
 .top-search-input::placeholder {
@@ -49,7 +104,7 @@
 /* Dropdown */
 .top-search-dropdown {
   position: absolute;
-  top: 48px;
+  top: 42px;
   left: 0;
   right: 0;
   background: var(--bg-card);

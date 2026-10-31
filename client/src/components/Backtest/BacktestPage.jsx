@@ -8,26 +8,6 @@ import './BacktestPage.css';
 function toDateStr(d) { return d.toISOString().slice(0, 10); }
 function daysAgo(n) { const d = new Date(); d.setDate(d.getDate() - n); return toDateStr(d); }
 
-// ── Synthetic candle generator (fallback when real data is insufficient) ──────
-function generateSyntheticCandles(basePrice = 19500, days = 365) {
-  const candles = [];
-  let price = basePrice;
-  const now = new Date();
-  for (let i = days; i >= 0; i--) {
-    const date = new Date(now);
-    date.setDate(date.getDate() - i);
-    if (date.getDay() === 0 || date.getDay() === 6) continue; // skip weekends
-    const change  = (Math.random() - 0.48) * price * 0.015;
-    const open    = +price.toFixed(2);
-    price        += change;
-    const close   = +price.toFixed(2);
-    const high    = +(Math.max(open, close) * (1 + Math.random() * 0.008)).toFixed(2);
-    const low     = +(Math.min(open, close) * (1 - Math.random() * 0.008)).toFixed(2);
-    candles.push({ date: date.toISOString().slice(0, 10), open, high, low, close, volume: Math.floor(Math.random() * 5000000 + 500000) });
-  }
-  return candles;
-}
-
 const INSTRUMENT_OPTIONS = [
   { value: 'EQUITY_DELIVERY', label: 'Equity (Delivery)',  hint: 'STT 0.1% both sides' },
   { value: 'EQUITY_INTRADAY', label: 'Equity (Intraday)',  hint: 'STT 0.025% sell side' },
@@ -54,7 +34,6 @@ const INITIAL_FORM = {
   symbol:          'NIFTY 50',
   startDate:       daysAgo(365),
   endDate:         toDateStr(new Date()),
-  useRealData:     true,
 };
 
 // ── Stat Card ──────────────────────────────────────────────────────────────────
@@ -184,24 +163,14 @@ export default function BacktestPage({ showToast }) {
     setResult(null);
     setAiReport('');
     try {
-      let candles = [];
-      if (form.useRealData) {
-        try {
-          // getCandles format: (symbol, range, interval). '1y' covers enough for a date filter.
-          const apiCandles = await api.getCandles(form.symbol, '1y', '1d');
-          if (Array.isArray(apiCandles) && apiCandles.length > 0) {
-            candles = apiCandles.filter(c => c.date >= form.startDate && c.date <= form.endDate);
-          }
-          if (candles.length < 10) throw new Error("Insufficient real data for selected dates");
-        } catch (e) {
-          console.warn('Real data fallback', e);
-          showToast('Insufficient real data, falling back to synthetic history', 'error');
-          candles = generateSyntheticCandles(19500, 365);
-        }
-      } else {
-        candles = generateSyntheticCandles(19500, 365);
+      // No synthetic fallback: a backtest without real history is meaningless.
+      const apiCandles = await api.getCandles(form.symbol, '1y', '1d');
+      const candles = Array.isArray(apiCandles)
+        ? apiCandles.filter(c => c.date >= form.startDate && c.date <= form.endDate)
+        : [];
+      if (candles.length < 10) {
+        throw new Error(`Insufficient real daily candles for ${form.symbol} in the selected date range.`);
       }
-
 
       const data = await api.runBacktest({
         strategy: {
@@ -261,6 +230,11 @@ export default function BacktestPage({ showToast }) {
         <div className="bt-header-left">
           <h2><FlaskConical size={26} className="bt-header-icon" /> AI Strategy Backtester</h2>
           <p className="bt-header-sub">Stress-test strategies with Indian market costs: STT, brokerage, slippage &amp; stamp duty.</p>
+          {step === 2 && (
+            <div style={{ marginTop: 6, fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 99, display: 'inline-block', background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.5)', color: 'var(--gain)' }}>
+              REAL MARKET DATA
+            </div>
+          )}
         </div>
         {step === 2 && (
           <button className="bt-btn-outline" onClick={() => setStep(1)}>← Back to Config</button>
@@ -311,16 +285,12 @@ export default function BacktestPage({ showToast }) {
               <div className="bt-field-row" style={{ marginTop: 12 }}>
                 <div className="bt-field">
                   <label>Start Date</label>
-                  <input type="date" className="bt-input" value={form.startDate} onChange={e => set('startDate', e.target.value)} disabled={!form.useRealData} />
+                  <input type="date" className="bt-input" value={form.startDate} onChange={e => set('startDate', e.target.value)} />
                 </div>
                 <div className="bt-field">
                   <label>End Date</label>
-                  <input type="date" className="bt-input" value={form.endDate} onChange={e => set('endDate', e.target.value)} disabled={!form.useRealData} />
+                  <input type="date" className="bt-input" value={form.endDate} onChange={e => set('endDate', e.target.value)} />
                 </div>
-              </div>
-              <div className="bt-field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 }}>
-                <input type="checkbox" id="realDataToggle" checked={form.useRealData} onChange={e => set('useRealData', e.target.checked)} />
-                <label htmlFor="realDataToggle" style={{ textTransform: 'none', color: 'var(--text-primary)', cursor: 'pointer' }}>Use real market data (if available)</label>
               </div>
             </div>
 

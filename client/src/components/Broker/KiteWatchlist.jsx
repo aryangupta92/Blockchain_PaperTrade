@@ -1,41 +1,33 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Search, Plus, X, BarChart2 } from 'lucide-react';
+import { useEffect, useMemo, useState, useRef } from 'react';
+import { Search, Plus, X, BarChart2, Trash2 } from 'lucide-react';
 import api from '../../services/api';
 import './Kite.css';
-
-const DEFAULT_LISTS = ['Watchlist 1', 'Watchlist 2', 'Watchlist 3'];
 
 function fmtINR(n) {
   if (n == null) return '—';
   return '₹' + Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-// ── Kite-style watchlist: numbered lists, live search, hover B/S/C, exchange badges ──
-export default function KiteWatchlist({ quotes, watchlist, onAdd, onRemove, onSelect, selected, onBuy, onSell, onChart }) {
-  const [lists, setLists] = useState(() => {
-    try {
-      const raw = localStorage.getItem('kite_lists');
-      if (raw) return JSON.parse(raw);
-    } catch {}
-    return DEFAULT_LISTS;
-  });
-  const [activeList, setActiveList] = useState(0);
+// ── Kite-style watchlist: independent lists, "+" to add, live search, hover B/S/C ──
+export default function KiteWatchlist({
+  quotes, watchlists = [], activeListId, onSelectList, onAddList, onRenameList, onDeleteList,
+  onAdd, onRemove, onSelect, selected, onBuy, onSell, onChart,
+}) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
-  const [serverLists, setServerLists] = useState(null);
+  const [renamingId, setRenamingId] = useState(null);
+  const [renameVal, setRenameVal] = useState('');
+  const renameRef = useRef(null);
 
-  // Persist tab names
+  const activeList = watchlists.find(l => l.id === activeListId) || watchlists[0];
+  const rows = useMemo(() => activeList?.symbols || [], [activeList]);
+
   useEffect(() => {
-    try { localStorage.setItem('kite_lists', JSON.stringify(lists)); } catch {}
-  }, [lists]);
+    if (renamingId) renameRef.current?.focus();
+  }, [renamingId]);
 
-  // Load server watchlists once (non-blocking; local list stays source of truth for speed)
-  useEffect(() => {
-    api.getWatchlists().then(d => setServerLists(d)).catch(() => {});
-  }, []);
-
-  // Debounced instrument search (Kite-style: type → add)
+  // Debounced instrument search
   useEffect(() => {
     if (!query.trim()) { setResults([]); return; }
     setSearching(true);
@@ -49,8 +41,6 @@ export default function KiteWatchlist({ quotes, watchlist, onAdd, onRemove, onSe
     return () => clearTimeout(t);
   }, [query]);
 
-  const rows = useMemo(() => watchlist || [], [watchlist]);
-
   const baseSymbol = (s) => String(s || '').replace('.NS', '').replace('.BO', '');
   const exchOf = (s) => String(s || '').endsWith('.BO') ? 'BSE' : 'NSE';
 
@@ -62,43 +52,88 @@ export default function KiteWatchlist({ quotes, watchlist, onAdd, onRemove, onSe
     setResults([]);
   };
 
+  const addNewList = () => {
+    onAddList?.();
+  };
+
+  const deleteList = (list) => {
+    if (watchlists.length === 1) return;
+    if (!window.confirm(`Delete "${list.name}" and its ${list.symbols.length} instrument(s)?`)) return;
+    onDeleteList?.(list.id);
+  };
+
+  const commitRename = () => {
+    if (renamingId && renameVal.trim()) onRenameList?.(renamingId, renameVal.trim());
+    setRenamingId(null);
+    setRenameVal('');
+  };
+
   return (
     <div className="kite-watch">
+      {/* Tabs row */}
       <div className="kite-watch-tabs">
-        {lists.map((name, i) => (
-          <button
-            key={i}
-            className={`kite-watch-tab ${i === activeList ? 'active' : ''}`}
-            onClick={() => setActiveList(i)}
-            onDoubleClick={() => {
-              const next = prompt('Rename watchlist', name);
-              if (next?.trim()) setLists(prev => prev.map((l, j) => (j === i ? next.trim().slice(0, 24) : l)));
-            }}
-            title="Double-click to rename"
-          >
-            {i + 1} · {name}
-          </button>
-        ))}
+        {watchlists.map((list) => {
+          const isActive = list.id === activeList?.id;
+          return (
+            <div
+              key={list.id}
+              className={`kite-watch-tab ${isActive ? 'active' : ''}`}
+              onClick={() => onSelectList?.(list.id)}
+              title={isActive ? 'Double-click to rename' : list.name}
+              style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+            >
+              {renamingId === list.id ? (
+                <input
+                  ref={renameRef}
+                  value={renameVal}
+                  onChange={e => setRenameVal(e.target.value)}
+                  onBlur={commitRename}
+                  onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenamingId(null); }}
+                  style={{ width: 80, fontSize: 11, background: 'transparent', border: 'none', borderBottom: '1px solid var(--accent-primary)', color: 'var(--text-primary)', outline: 'none', padding: '0 2px' }}
+                  onClick={e => e.stopPropagation()}
+                />
+              ) : (
+                <span onDoubleClick={(e) => { e.stopPropagation(); setRenamingId(list.id); setRenameVal(list.name); }}>
+                  {list.name}
+                </span>
+              )}
+              {isActive && watchlists.length > 1 && renamingId !== list.id && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); deleteList(list); }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}
+                  title={`Delete ${list.name}`}
+                >
+                  <Trash2 size={10} />
+                </button>
+              )}
+            </div>
+          );
+        })}
+        <button className="kite-watch-tab" onClick={addNewList} title="Add new watchlist" style={{ color: 'var(--accent-primary)', fontWeight: 800 }}>
+          <Plus size={13} />
+        </button>
       </div>
 
+      {/* Search bar */}
       <div className="kite-watch-search">
         <Search size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
         <input
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder="Search eg: reliance, tcs, nifty, bank"
+          placeholder="Search eg: reliance, nifty, hdfc"
           spellCheck={false}
           autoComplete="off"
         />
         {query && <X size={14} style={{ cursor: 'pointer', color: 'var(--text-muted)' }} onClick={() => setQuery('')} />}
       </div>
 
+      {/* Search results dropdown */}
       {query.trim() && (
         <div className="kite-search-results">
           {searching && <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-muted)' }}>Searching NSE / BSE…</div>}
           {!searching && results.length === 0 && (
             <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-muted)' }}>
-              No matches — press Enter to add “{query.trim().toUpperCase()}” anyway
+              No matches — press Enter to add "{query.trim().toUpperCase()}" anyway
             </div>
           )}
           {results.map(r => {
@@ -125,17 +160,19 @@ export default function KiteWatchlist({ quotes, watchlist, onAdd, onRemove, onSe
         </div>
       )}
 
-      <div style={{ padding: '6px 10px', fontSize: 10.5, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between' }}>
-        <span>{rows.length} / 50 instruments</span>
-        <span>Double-click tab to rename</span>
+      {/* Instruments count */}
+      <div style={{ padding: '5px 10px', fontSize: 10.5, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+        <span className="kite-watch-listname">{activeList?.name} · {rows.length}/50</span>
+        <span style={{ opacity: 0.6 }}>Double-click tab to rename</span>
       </div>
 
+      {/* Watchlist rows */}
       <div className="kite-watch-list">
         {rows.length === 0 && (
           <div style={{ padding: '28px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
             <BarChart2 size={26} style={{ opacity: 0.3, marginBottom: 8 }} />
             <div style={{ fontWeight: 700, color: 'var(--text-secondary)' }}>Watchlist empty</div>
-            <div style={{ marginTop: 4 }}>Search above and press ADD — just like Kite.</div>
+            <div style={{ marginTop: 4 }}>Search above and press ADD to get started.</div>
           </div>
         )}
         {rows.map(sym => {
@@ -168,12 +205,6 @@ export default function KiteWatchlist({ quotes, watchlist, onAdd, onRemove, onSe
           );
         })}
       </div>
-
-      {serverLists?.watchlists?.length > 0 && (
-        <div style={{ padding: '6px 10px', fontSize: 10.5, color: 'var(--text-muted)', borderTop: '1px solid var(--border)' }}>
-          Synced {serverLists.watchlists.length} cloud watchlist(s)
-        </div>
-      )}
     </div>
   );
 }

@@ -20,6 +20,50 @@ function fmtINR(n) {
   return '₹' + Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function BracketVisual({ side, isBO, entryOrderType, entryPrice, slPrice, slOrderType, targetPrice }) {
+  const entryBg = side === 'buy' ? 'rgba(41,98,255,0.16)' : 'rgba(242,54,69,0.16)';
+  const entryBorder = side === 'buy' ? 'rgba(41,98,255,0.55)' : 'rgba(242,54,69,0.55)';
+  const entryLabel = `ENTRY ${side.toUpperCase()} ${entryOrderType}${entryPrice ? ` @ ${fmtINR(entryPrice)}` : ''}`;
+  const slLabel = `SL${slPrice ? ` @ ${fmtINR(slPrice)}` : ''}${isBO ? ` · ${slOrderType}` : ''}`;
+  const targetLabel = `TARGET${targetPrice ? ` @ ${fmtINR(targetPrice)}` : ''}`;
+  return (
+    <div style={{ marginTop: 10, padding: '12px 14px', background: '#131722', borderRadius: 10, border: '1px solid var(--border)' }}>
+      <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', textAlign: 'center', marginBottom: 12 }}>
+        {isBO ? 'Bracket order · 3 legs' : 'Cover order · 2 legs'}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <div style={{ padding: '7px 14px', borderRadius: 8, background: entryBg, border: `1px solid ${entryBorder}`, fontSize: 11, fontWeight: 800, color: '#d1d4dc', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
+          {entryLabel}
+        </div>
+        {isBO ? (
+          <>
+            <div style={{ width: 1, height: 10, background: 'var(--border)' }} />
+            <div style={{ width: 200, height: 1, background: 'var(--border)' }} />
+          </>
+        ) : (
+          <div style={{ width: 1, height: 20, background: 'var(--border)' }} />
+        )}
+        <div style={{ display: 'flex', width: isBO ? 200 : 'auto', justifyContent: isBO ? 'center' : 'center' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <div style={{ width: 1, height: 12, background: '#f23645' }} />
+            <div style={{ padding: '7px 14px', borderRadius: 8, background: 'rgba(242,54,69,0.12)', border: '1px solid rgba(242,54,69,0.45)', fontSize: 11, fontWeight: 800, color: '#f23645', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
+              {slLabel}
+            </div>
+          </div>
+          {isBO && (
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              <div style={{ width: 1, height: 12, background: '#089981' }} />
+              <div style={{ padding: '7px 14px', borderRadius: 8, background: 'rgba(8,153,129,0.12)', border: '1px solid rgba(8,153,129,0.45)', fontSize: 11, fontWeight: 800, color: '#089981', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
+                {targetLabel}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function OrderTicket({
   isOpen,
   onClose,
@@ -59,6 +103,9 @@ export default function OrderTicket({
   const [disclosedQty, setDisclosedQty] = useState('');
   const [validity, setValidity] = useState('DAY');
   const [lots, setLots] = useState(1);
+  const [slTriggerPrice, setSlTriggerPrice] = useState('');
+  const [slOrderType, setSlOrderType] = useState('SL-M');
+  const [targetPrice, setTargetPrice] = useState('');
 
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
@@ -88,6 +135,11 @@ export default function OrderTicket({
   const holding = holdings[symbol] || null;
   const heldQty = holding?.quantity || 0;
 
+  const isBO = productType === 'BO';
+  const isCO = productType === 'CO';
+  const isBracket = isBO || isCO;
+  const productOptions = segment === 'EQ' ? ['CNC', 'MIS', 'BO', 'CO'] : ['NRML', 'MIS'];
+
   const isAmo = session && session.session !== 'OPEN';
 
   // Session for AMO badge (Kite shows AMO whenever market is closed)
@@ -102,16 +154,21 @@ export default function OrderTicket({
     if (isModify) {
       const o = modifyOrder;
       const sym = o.instrument?.tradingSymbol?.replace('.NS', '').replace('.BO', '') || initialSymbol;
+      const loadedProduct = (o.productType || 'CNC').toUpperCase();
+      const loadedOrderType = (o.orderType || 'LIMIT').toUpperCase();
       setEqSymbol(sym);
       setSide((o.side || 'BUY').toLowerCase());
-      setOrderType(o.orderType || 'LIMIT');
-      setProductType(o.productType || 'CNC');
+      setOrderType(loadedOrderType === 'BO' || loadedOrderType === 'CO' ? 'MARKET' : loadedOrderType);
+      setProductType(loadedProduct);
       setValidity(o.validity || 'DAY');
       setLimitPrice(o.price ? String(o.price) : '');
       setTriggerPrice(o.triggerPrice ? String(o.triggerPrice) : '');
       setDisclosedQty(o.disclosedQuantity ? String(o.disclosedQuantity) : '');
       setLots(Number(o.quantity) || 1);
       setSegment('EQ');
+      setSlTriggerPrice(o.triggerPrice ? String(o.triggerPrice) : '');
+      setSlOrderType('SL-M');
+      setTargetPrice('');
     } else {
       setSegment(initialSegment);
       setEqSymbol(initialSymbol);
@@ -126,6 +183,9 @@ export default function OrderTicket({
       setTriggerPrice('');
       setDisclosedQty('');
       setOrderType('MARKET');
+      setSlTriggerPrice('');
+      setSlOrderType('SL-M');
+      setTargetPrice('');
     }
     setResult(null);
     setError('');
@@ -135,6 +195,16 @@ export default function OrderTicket({
   useEffect(() => {
     if (!isModify) setProductType(segment === 'FO' ? 'NRML' : 'CNC');
   }, [segment]); // eslint-disable-line
+
+  const selectProduct = (p) => {
+    setProductType(p);
+    if (p === 'BO' || p === 'CO') {
+      if (orderType !== 'MARKET' && orderType !== 'LIMIT') setOrderType('MARKET');
+      setSlTriggerPrice('');
+      setTargetPrice('');
+      setSlOrderType('SL-M');
+    }
+  };
 
   const fetchMargin = useCallback(async () => {
     if (!symbol || !execPrice || !quantity) return;
@@ -155,6 +225,24 @@ export default function OrderTicket({
     marginTimerRef.current = setTimeout(fetchMargin, 400);
     return () => clearTimeout(marginTimerRef.current);
   }, [fetchMargin, isOpen]);
+
+  const validateBracket = () => {
+    if (!isBracket) return '';
+    const ltp = Number(livePrice);
+    const sl = Number(slTriggerPrice);
+    if (!slTriggerPrice || !Number.isFinite(sl)) return 'Enter a stop-loss trigger price.';
+    if (side === 'buy' && sl >= ltp) return 'For a BUY bracket, stop-loss trigger must be below LTP.';
+    if (side === 'sell' && sl <= ltp) return 'For a SELL bracket, stop-loss trigger must be above LTP.';
+    if (isBO) {
+      const tgt = Number(targetPrice);
+      if (!targetPrice || !Number.isFinite(tgt)) return 'Enter a target price.';
+      if (side === 'buy' && tgt <= ltp) return 'For a BUY bracket, target must be above LTP.';
+      if (side === 'sell' && tgt >= ltp) return 'For a SELL bracket, target must be below LTP.';
+      if (side === 'buy' && tgt <= sl) return 'Target must be above the stop-loss trigger for a BUY bracket.';
+      if (side === 'sell' && tgt >= sl) return 'Target must be below the stop-loss trigger for a SELL bracket.';
+    }
+    return '';
+  };
 
   const handleTrade = async () => {
     setError('');
@@ -194,6 +282,11 @@ export default function OrderTicket({
     if (segment === 'FO' && freezeLots > 0 && lots > freezeLots) { setError(`NSE freeze quantity exceeded: max ${freezeLots} lots (${freezeLots * lotSize} qty) per order. Split your order.`); return; }
     if (disclosedQty && Number(disclosedQty) > quantity) { setError('Disclosed quantity cannot exceed total quantity (max 10% rule on real exchanges).'); return; }
 
+    if (isBracket) {
+      const bracketError = validateBracket();
+      if (bracketError) { setError(bracketError); return; }
+    }
+
     setLoading(true);
     try {
       const payload = {
@@ -201,25 +294,36 @@ export default function OrderTicket({
         symbol: exchange === 'BSE' && segment === 'EQ' && !symbol.endsWith('.BO') ? `${symbol}.BO` : symbol,
         quantity,
         price: execPrice,
-        orderType,
+        orderType: isBracket ? productType : orderType,
         productType,
         validity,
         triggerPrice: triggerPrice ? Number(triggerPrice) : undefined,
         disclosedQuantity: disclosedQty ? Number(disclosedQty) : undefined,
       };
+      if (isBracket) {
+        payload.stopLoss = Number(slTriggerPrice);
+        payload.stopLossType = slOrderType;
+        payload.entryOrderType = orderType;
+        if (isBO) payload.target = Number(targetPrice);
+      }
       const response = await onTrade(payload);
       if (!response?.success && response?.violations?.length > 0) {
         setError(response.violations[0].message);
         return;
       }
+      const legNote = isBracket
+        ? isBO
+          ? ` · SL ${fmtINR(Number(slTriggerPrice))} / Target ${fmtINR(Number(targetPrice))}`
+          : ` · SL ${fmtINR(Number(slTriggerPrice))}`
+        : '';
       const filledNow = response?.order?.status === 'FILLED';
       setResult({
         success: true,
         message: isAmo
-          ? `AMO ${side.toUpperCase()} ${quantity} × ${symbol} @ ${fmtINR(execPrice)} — queued for next open (09:15 IST)`
+          ? `AMO ${side.toUpperCase()} ${quantity} × ${symbol} @ ${fmtINR(execPrice)}${legNote} — queued for next open (09:15 IST)`
           : filledNow
-            ? `${side.toUpperCase()} ${quantity} × ${symbol} @ ${fmtINR(execPrice)} — Complete`
-            : `${side.toUpperCase()} ${quantity} × ${symbol} @ ${fmtINR(execPrice)} — ${response?.order?.status || 'Open'}`,
+            ? `${side.toUpperCase()} ${quantity} × ${symbol} @ ${fmtINR(execPrice)}${legNote} — Complete`
+            : `${side.toUpperCase()} ${quantity} × ${symbol} @ ${fmtINR(execPrice)}${legNote} — ${response?.order?.status || 'Open'}`,
         trade: response?.trade,
         block: response?.block || response?.trade,
       });
@@ -227,6 +331,10 @@ export default function OrderTicket({
       setLimitPrice('');
       setTriggerPrice('');
       setDisclosedQty('');
+      if (isBracket) {
+        setSlTriggerPrice('');
+        setTargetPrice('');
+      }
     } catch (e) {
       setError(e.message);
     } finally {
@@ -239,6 +347,12 @@ export default function OrderTicket({
   const needsTrigger = orderType === 'SL' || orderType === 'SL-M';
   const needsLimit = orderType === 'LIMIT' || orderType === 'GTT' || orderType === 'SL';
   const priceColor = liveQuote?.changePercent >= 0 ? 'var(--gain)' : 'var(--loss)';
+  const slPlaceholder = livePrice
+    ? (side === 'buy' ? (livePrice * 0.98).toFixed(2) : (livePrice * 1.02).toFixed(2))
+    : '0.00';
+  const targetPlaceholder = livePrice
+    ? (side === 'buy' ? (livePrice * 1.02).toFixed(2) : (livePrice * 0.98).toFixed(2))
+    : '0.00';
 
   return (
     <div className="kite-dock-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -250,6 +364,9 @@ export default function OrderTicket({
           <span style={{ fontWeight: 800, fontSize: 14 }}>{symbol || 'Select Instrument'}</span>
           <span className="kite-exch">{exchange}</span>
           <span className="kite-chip" style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)' }}>{segment}</span>
+          {isBracket && (
+            <span className="kite-chip" style={{ background: 'rgba(41,98,255,0.15)', color: '#2962ff', border: '1px solid rgba(41,98,255,0.4)' }}>{productType}</span>
+          )}
           {isAmo && <span className="kite-amo-badge">AMO — market {session?.session?.toLowerCase().replace(/_/g, ' ')}, executes at next open</span>}
           <button onClick={onClose} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 20, cursor: 'pointer' }}><X size={18} /></button>
         </div>
@@ -357,23 +474,30 @@ export default function OrderTicket({
           {/* Col 2: product + type + prices */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <div className="kite-field">
-              <label>Product {productType === 'MIS' ? '· 5x leverage, SQ-OFF 15:15' : productType === 'CNC' ? '· delivery, hold days' : '· F&O overnight'}</label>
+              <label>
+                Product{' '}
+                {productType === 'MIS' && '· 5x leverage, SQ-OFF 15:15'}
+                {productType === 'CNC' && '· delivery, hold days'}
+                {productType === 'NRML' && '· F&O overnight'}
+                {productType === 'BO' && '· 3 legs · entry + SL + target'}
+                {productType === 'CO' && '· 2 legs · entry + SL'}
+              </label>
               <div className="kite-seg">
-                {(segment === 'EQ' ? ['CNC', 'MIS'] : ['NRML', 'MIS']).map(p => (
-                  <button key={p} className={productType === p ? 'active' : ''} onClick={() => setProductType(p)}>{p}</button>
+                {productOptions.map(p => (
+                  <button key={p} className={productType === p ? 'active' : ''} onClick={() => selectProduct(p)}>{p}</button>
                 ))}
               </div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
               <div className="kite-field">
-                <label>Order type</label>
+                <label>{isBracket ? 'Entry order type' : 'Order type'}</label>
                 <select value={orderType} onChange={e => setOrderType(e.target.value)}>
                   <option value="MARKET">MARKET</option>
                   <option value="LIMIT">LIMIT</option>
-                  <option value="SL">SL</option>
-                  <option value="SL-M">SL-M</option>
-                  <option value="GTT">GTT</option>
-                  <option value="IOC">IOC</option>
+                  {!isBracket && <option value="SL">SL</option>}
+                  {!isBracket && <option value="SL-M">SL-M</option>}
+                  {!isBracket && <option value="GTT">GTT</option>}
+                  {!isBracket && <option value="IOC">IOC</option>}
                 </select>
               </div>
               <div className="kite-field">
@@ -398,6 +522,50 @@ export default function OrderTicket({
                   {side === 'sell' ? 'Below LTP → sell stop triggers' : 'Above LTP → buy stop triggers'}
                 </div>
               </div>
+            )}
+            {isBracket && (
+              <>
+                <div style={{ padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border)', background: '#131722', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    {isBO ? 'Bracket legs' : 'Cover legs'}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: isBO ? '1fr 1fr' : '1fr', gap: 8 }}>
+                    <div className="kite-field">
+                      <label>Stop-loss trigger (₹) *</label>
+                      <input type="number" value={slTriggerPrice} onChange={e => setSlTriggerPrice(e.target.value)} placeholder={slPlaceholder} />
+                    </div>
+                    {isBO && (
+                      <div className="kite-field">
+                        <label>SL order type</label>
+                        <select value={slOrderType} onChange={e => setSlOrderType(e.target.value)}>
+                          <option value="SL-M">SL-M · market</option>
+                          <option value="SL">SL · limit</option>
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                  {isBO && (
+                    <div className="kite-field">
+                      <label>Target price (₹) *</label>
+                      <input type="number" value={targetPrice} onChange={e => setTargetPrice(e.target.value)} placeholder={targetPlaceholder} />
+                    </div>
+                  )}
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                    {side === 'buy'
+                      ? `BUY ${isBO ? 'bracket' : 'cover'}: SL below ${fmtINR(livePrice)}${isBO ? ` · Target above ${fmtINR(livePrice)}` : ' · no target leg'}`
+                      : `SELL ${isBO ? 'bracket' : 'cover'}: SL above ${fmtINR(livePrice)}${isBO ? ` · Target below ${fmtINR(livePrice)}` : ' · no target leg'}`}
+                  </div>
+                </div>
+                <BracketVisual
+                  side={side}
+                  isBO={isBO}
+                  entryOrderType={orderType}
+                  entryPrice={execPrice}
+                  slPrice={Number(slTriggerPrice)}
+                  slOrderType={slOrderType}
+                  targetPrice={Number(targetPrice)}
+                />
+              </>
             )}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
               <div className="kite-field">
@@ -472,7 +640,14 @@ export default function OrderTicket({
             )}
 
             <button className={`kite-submit ${side}`} onClick={handleTrade} disabled={loading || (!execPrice && orderType === 'MARKET' && !isModify)}>
-              {loading ? 'Working…' : isModify ? `MODIFY → ${symbol}` : `${side === 'buy' ? 'BUY' : 'SELL'} ${symbol || '—'} · ${productType}${isAmo ? ' · AMO' : ''}`}
+              {loading ? 'Working…' : isModify ? `MODIFY → ${symbol}` : (
+                <>
+                  {isBracket && (
+                    <span style={{ background: 'var(--accent)', color: '#fff', borderRadius: 4, padding: '1px 6px', fontSize: 10, marginRight: 6, letterSpacing: '0.06em' }}>{productType}</span>
+                  )}
+                  {side === 'buy' ? 'BUY' : 'SELL'} {symbol || '—'} · {productType}{isAmo ? ' · AMO' : ''}
+                </>
+              )}
             </button>
             {!marginData?.sufficient && marginData && !result?.success && (
               <div className="ot-alert info"><Info size={14} /><span>Insufficient balance. Need {fmtINR(marginData.margin?.required)}, have {fmtINR(marginData.available)}.</span></div>

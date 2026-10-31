@@ -13,6 +13,8 @@ export default function FundsPage({ balance, quotes, holdings, showToast }) {
   const [summary, setSummary] = useState(null);
   const [ledger, setLedger] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [topupAmt, setTopupAmt] = useState(50000);
+  const [topping, setTopping] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -28,7 +30,18 @@ export default function FundsPage({ balance, quotes, holdings, showToast }) {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  const handleTopup = async () => {
+    setTopping(true);
+    try {
+      const res = await api.topup(topupAmt);
+      showToast?.(`Added ₹${Number(topupAmt).toLocaleString('en-IN')}. New balance: ₹${Number(res.balance).toLocaleString('en-IN')}`, 'success');
+      setTimeout(() => window.location.reload(), 1200);
+    } catch (e) {
+      showToast?.(e.message || 'Top-up failed', 'error');
+    } finally {
+      setTopping(false);
+    }
+  };
 
   const liveCash = summary?.cash ?? balance ?? 0;
   const invested = summary?.totalInvested ?? 0;
@@ -95,6 +108,29 @@ export default function FundsPage({ balance, quotes, holdings, showToast }) {
             <RotateCcw size={13} /> Withdraw
           </button>
         </div>
+      </div>
+
+      <div className="card" style={{ marginTop: 12, padding: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Add Money to BlockTrade</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+          <span style={{ fontSize: 20, fontWeight: 800, fontFamily: 'var(--font-mono)' }}>₹</span>
+          <input
+            type="number"
+            value={topupAmt}
+            onChange={(e) => setTopupAmt(Number(e.target.value) || 0)}
+            style={{ flex: 1, fontSize: 18, fontWeight: 700, fontFamily: 'var(--font-mono)', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-primary)' }}
+          />
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+          {[10000, 25000, 50000, 100000, 250000].map((a) => (
+            <button key={a} onClick={() => setTopupAmt(a)} style={{ padding: '4px 10px', borderRadius: 6, border: topupAmt === a ? '1px solid var(--accent-primary)' : '1px solid var(--border)', background: topupAmt === a ? 'rgba(0,179,134,0.12)' : 'transparent', color: topupAmt === a ? 'var(--accent-primary)' : 'var(--text-muted)', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+              +₹{(a / 1000).toFixed(0)}k
+            </button>
+          ))}
+        </div>
+        <button className="btn-gain" style={{ width: '100%', fontSize: 13 }} onClick={handleTopup} disabled={topping || topupAmt <= 0}>
+          {topping ? 'Adding…' : 'Add Money for Investing'}
+        </button>
       </div>
 
       <div className="card" style={{ marginTop: 12 }}>
