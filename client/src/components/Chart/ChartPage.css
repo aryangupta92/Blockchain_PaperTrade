@@ -30,7 +30,12 @@
   align-items: center;
   justify-content: space-between;
   padding: 6px 14px;
-  gap: 12px;
+  gap: 10px 12px;
+  flex-wrap: wrap;
+}
+
+.cpage-title-row > div {
+  min-width: 0;
 }
 
 .cpage-symbol-badge {
@@ -76,6 +81,16 @@
 }
 .cpage-ohlc-bar strong { color: var(--text-primary); }
 .ohlc-label { font-weight: 600; color: var(--text-disabled); }
+.ohlc-data {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-disabled);
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
 .ohlc-pnl { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .ohlc-holding-badge {
   background: rgba(99,102,241,0.15);
@@ -92,6 +107,24 @@
   gap: 2px;
   padding: 4px 14px;
   border-top: 1px solid #21262d;
+}
+
+.cpage-tf-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 6px;
+  padding: 2px;
+  border: 1px solid var(--border);
+}
+
+.cpage-range-label {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--text-disabled);
+  padding: 0 5px 0 7px;
 }
 
 .cpage-tf-btn {
@@ -118,7 +151,7 @@
 
 /* ── Drawing Tools ───────────────────────────────────────────────────────── */
 .cpage-tools {
-  width: 42px;
+  width: 44px;
   background: #161b22;
   border-right: 1px solid #21262d;
   display: flex;
@@ -167,14 +200,18 @@
   height: 100%;
 }
 
-/* BUY/SELL chart buttons */
-.chart-trade-buttons {
+/* Empty / error state */
+.cpage-chart-empty {
   position: absolute;
-  top: 10px;
-  left: 70px;
+  inset: 0;
   display: flex;
-  gap: 6px;
-  z-index: 10;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 24px;
+  z-index: 12;
+  background: radial-gradient(ellipse at center, rgba(13,17,23,0.55), rgba(13,17,23,0.9));
 }
 
 .chart-buy-btn, .chart-sell-btn {
@@ -407,9 +444,20 @@
 
 /* ── Bottom Panel (Option chain, Technicals) ─────────────────────────────── */
 .cpage-bottom-panel {
-  height: 380px;
+  height: min(340px, 42vh);
   background: #0d1117;
   border-top: 1px solid #21262d;
   overflow: auto;
   flex-shrink: 0;
+}
+
+@media (max-width: 1100px) {
+  .cpage-info-panel { display: none; }
+}
+
+@media (max-width: 820px) {
+  .cpage-tools { display: none; }
+  .cpage-bottom-panel { height: min(300px, 40vh); }
+  .cpage-bottom-bar { flex-wrap: wrap; row-gap: 6px; }
+  .cpage-range-label { display: none; }
 }

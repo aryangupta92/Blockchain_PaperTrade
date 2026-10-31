@@ -1,15 +1,54 @@
-/* ─── Advanced Chart ─────────────────────────────────────────────────────── */
+/* ─── Advanced Chart — TradingView Dark Theme ─────────────────────────────── */
 .adv-chart {
   position: relative;
+  background: #131722;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  overflow: hidden;
 }
 
 .chart-controls {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-card);
+  padding: 8px 12px;
+  border-bottom: 1px solid #2b2b43;
+  background: #1e222d;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chart-controls-left,
+.chart-controls-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chart-controls-left { flex-wrap: wrap; }
+.chart-controls-right { flex-wrap: wrap; justify-content: flex-end; }
+
+.chart-type-group {
+  display: flex;
+  background: rgba(255,255,255,0.05);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.chart-vol-btn {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+}
+.chart-vol-btn.active {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #fff;
 }
 
 .chart-symbol-select {
