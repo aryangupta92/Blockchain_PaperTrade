@@ -119,11 +119,25 @@ router.get('/status', authMiddleware, async (req, res) => {
 
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    if (user.planId === 'FREE' || user.balance <= 0) {
-      return res.json({ active: false, reason: user.balance <= 0 ? 'balance_zero' : 'no_subscription' });
+    // A paper-trading platform must show real market data to everyone. The
+    // subscription gates TRADING capacity, never data visibility - otherwise a
+    // brand-new account sees a blank app and every feature looks broken.
+    // FREE accounts get a working virtual balance so they can trade immediately.
+    const FREE_BALANCE = Number(process.env.FREE_PLAN_BALANCE || 100000);
+    if (user.planId === 'FREE' && !(user.balance > 0)) {
+      await prisma.user.update({ where: { id: user.id }, data: { balance: FREE_BALANCE } });
+      user.balance = FREE_BALANCE;
     }
 
-    const plan = PLANS[user.planId];
+    if (user.balance <= 0) {
+      return res.json({ active: false, reason: 'balance_zero' });
+    }
+
+    const plan = PLANS[user.planId] || {
+      id: 'free', name: 'Free', price: 0, priceLabel: 'Free', virtualMoney: FREE_BALANCE,
+      maxTrades: 50, features: ['Real market data', 'Paper trading', 'Charts & indicators'],
+      color: '#64748b', badge: 'FREE', description: 'Free tier',
+    };
     
     // --- LIVE DHAN INTEGRATION ---
     let dhanFunds = { availabelBalance: user.balance };

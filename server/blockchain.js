@@ -58,6 +58,20 @@ class Blockchain {
     return this.chain[this.chain.length - 1];
   }
 
+  getChain() {
+    return this.chain;
+  }
+
+  isChainValid() {
+    for (let i = 1; i < this.chain.length; i++) {
+      const current = this.chain[i];
+      const prev = this.chain[i - 1];
+      if (current.previousHash !== prev.hash) return false;
+      if (current.hash !== current.calculateHash()) return false;
+    }
+    return true;
+  }
+
   addBlock(tradeData) {
     const prev = this.getLatestBlock();
     const block = new Block(this.chain.length, tradeData, prev.hash);

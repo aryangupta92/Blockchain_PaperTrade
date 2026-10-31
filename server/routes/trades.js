@@ -16,11 +16,35 @@ const prisma = new PrismaClient();
 // ── POST /api/trades — Place an order ────────────────────────────────────────
 router.post('/', authMiddleware, async (req, res) => {
   try {
-    const { type, symbol, quantity, price, orderType = 'market', productType = 'CNC', triggerPrice, idempotencyKey, validity = 'DAY' } = req.body;
-    if (!symbol)   return res.status(400).json({ error: 'symbol is required' });
-    if (!type)     return res.status(400).json({ error: 'type (buy|sell) is required' });
-    if (!quantity) return res.status(400).json({ error: 'quantity is required' });
-    if (!price)    return res.status(400).json({ error: 'price is required' });
+    const { type, symbol, quantity, price, orderType = 'market', productType = 'CNC', triggerPrice, idempotencyKey, validity = 'DAY', stopLoss, target, stopLossType } = req.body;
+    if (!symbol || typeof symbol !== 'string' || !symbol.trim()) return res.status(400).json({ error: 'symbol is required' });
+    if (!type || !['buy', 'sell', 'BUY', 'SELL'].includes(String(type))) return res.status(400).json({ error: 'type must be buy or sell' });
+    const qty = Number(quantity);
+    const px = Number(price);
+    if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ error: 'quantity must be a positive number' });
+    if (!Number.isFinite(px) || px <= 0) return res.status(400).json({ error: 'price must be a positive number' });
+    const allowedOrderTypes = ['MARKET', 'LIMIT', 'SL', 'SL-M', 'GTT', 'IOC', 'BO', 'CO', 'market', 'limit'];
+    if (orderType && !allowedOrderTypes.includes(String(orderType))) return res.status(400).json({ error: `orderType must be one of ${allowedOrderTypes.join(', ')}` });
+
+    const ot = String(orderType).toUpperCase();
+    if (ot === 'BO') {
+      if (!stopLoss || !target) return res.status(400).json({ error: 'Bracket Order requires both stopLoss and target prices' });
+      const sl = Number(stopLoss);
+      const tgt = Number(target);
+      if (!Number.isFinite(sl) || sl <= 0) return res.status(400).json({ error: 'Invalid stopLoss price' });
+      if (!Number.isFinite(tgt) || tgt <= 0) return res.status(400).json({ error: 'Invalid target price' });
+      const side = String(type).toLowerCase();
+      if (side === 'buy' && (sl >= px || tgt <= px)) return res.status(400).json({ error: 'For BUY BO: stopLoss must be below entry, target must be above entry' });
+      if (side === 'sell' && (sl <= px || tgt >= px)) return res.status(400).json({ error: 'For SELL BO: stopLoss must be above entry, target must be below entry' });
+    }
+    if (ot === 'CO') {
+      if (!stopLoss) return res.status(400).json({ error: 'Cover Order requires a stopLoss price' });
+      const sl = Number(stopLoss);
+      if (!Number.isFinite(sl) || sl <= 0) return res.status(400).json({ error: 'Invalid stopLoss price' });
+      const side = String(type).toLowerCase();
+      if (side === 'buy' && sl >= px) return res.status(400).json({ error: 'For BUY CO: stopLoss must be below entry price' });
+      if (side === 'sell' && sl <= px) return res.status(400).json({ error: 'For SELL CO: stopLoss must be above entry price' });
+    }
 
     const result = await placeOrder({
       userId:         req.user.id,
@@ -31,6 +55,8 @@ router.post('/', authMiddleware, async (req, res) => {
       orderType,
       productType,
       triggerPrice:   triggerPrice ? Number(triggerPrice) : null,
+      stopLoss:       stopLoss ? Number(stopLoss) : null,
+      target:         target ? Number(target) : null,
       validity,
       idempotencyKey: idempotencyKey || null,
       ctx: {

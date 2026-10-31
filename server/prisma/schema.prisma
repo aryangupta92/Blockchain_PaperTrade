@@ -29,6 +29,22 @@ model User {
   journalEntries  TradeJournal[]
   auditLogs       AuditLog[]
   notifications   Notification[]
+  refreshTokens   RefreshToken[]
+}
+
+// ─── AUTH: REFRESH TOKENS ─────────────────────────────────────────────────────
+// HTTP-only rotating refresh tokens (hashed at rest, 30d TTL, revocation on reuse)
+model RefreshToken {
+  id         String   @id @default(uuid())
+  userId     String
+  tokenHash String   @unique
+  expiresAt DateTime
+  revoked    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id])
+
+  @@index([userId, revoked, expiresAt])
 }
 
 // ─── INSTRUMENT MASTER ────────────────────────────────────────────────────────
@@ -300,3 +316,22 @@ model QuoteSnapshot {
 
   @@index([tradingSymbol, receivedAt])
 }
+
+// ─── CANDLE STORE (chart data — backfilled from DhanHQ, read by charts) ───────
+model Candle {
+  id            String   @id @default(uuid())
+  tradingSymbol String
+  timeframe     String // 1m,3m,5m,15m,30m,1h,4h,1D,1W
+  ts            Int // unix seconds (bucket open time)
+  o             Float
+  h             Float
+  l             Float
+  c             Float
+  v             Float   @default(0)
+  oi            Float?  // open interest (F&O)
+  createdAt     DateTime @default(now())
+
+  @@unique([tradingSymbol, timeframe, ts])
+  @@index([tradingSymbol, timeframe, ts])
+}
+

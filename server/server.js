@@ -12,6 +12,9 @@ const http         = require('http');
 const app  = express();
 const PORT = process.env.PORT || 5000;
 
+// Trust proxy (Nginx/Cloudflare) so rate limits + IP logging use the real client IP
+app.set('trust proxy', 1);
+
 // ── Security Headers ──────────────────────────────────────────────────────────
 app.use(helmet({
   contentSecurityPolicy: false, // Managed by frontend
@@ -20,6 +23,13 @@ app.use(helmet({
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
 app.use(cors({
+  origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+// Explicit preflight for credentialed requests
+app.options('*', cors({
   origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
   credentials: true,
 }));
@@ -36,7 +46,15 @@ const logger = pino({
 });
 app.use(pinoHttp({ logger, autoLogging: { ignore: req => req.url === '/api/system/health' } }));
 
-// ── Global Rate Limiters ──────────────────────────────────────────────────────
+// Sentry - error tracking + performance (opt-in via SENTRY_DSN)
+const Sentry = require('@sentry/node');
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  environment: process.env.NODE_ENV || 'development',
+  tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE || 0.1),
+  integrations: [Sentry.expressIntegration()],
+});
+
 // General API: 200 req/min per IP
 const generalLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -49,7 +67,7 @@ const generalLimiter = rateLimit({
 // Auth endpoints: 10 req/min per IP (brute force protection)
 const authLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 10,
+  max: 30,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many auth attempts. Try again in a minute.' },
@@ -84,6 +102,8 @@ const screenerRoutes     = require('./routes/screener');
 const traderControlRoutes = require('./routes/traderControl');
 const backtestRoutes      = require('./routes/backtest');
 const extensionsRoutes    = require('./routes/extensions');
+const dhanAuthRoutes      = require('./routes/dhanAuth');
+const notificationsRoutes = require('./routes/notifications');
 
 app.use('/api/market',       marketRoutes);
 app.use('/api/trades',       tradesRoutes);
@@ -100,10 +120,25 @@ app.use('/api/screener',     screenerRoutes);
 app.use('/api/trader-control', traderControlRoutes);
 app.use('/api/backtest',      backtestRoutes);
 app.use('/api/ext',           extensionsRoutes); // ADDITIVE broker-parity extensions (session/calendar/ledger/pnl/basket/indicators/drawings)
+app.use('/api/dhan',          dhanAuthRoutes);  // Dhan consent login + real feed health
+app.use('/api/notifications', notificationsRoutes); // User notification inbox
 
 // ── Legacy endpoints (backward compat) ────────────────────────────────────────
 app.get('/api/health', (req, res) => res.redirect('/api/system/health'));
 app.get('/api/sebi/rules', (req, res) => res.redirect('/api/system/sebi'));
+
+// Prometheus metrics endpoint (ops)
+const prom = require('prom-client');
+const { collectDefaultMetrics } = prom;
+collectDefaultMetrics();
+app.get('/api/metrics', async (req, res) => {
+  try {
+    res.set('Content-Type', prom.register.contentType);
+    res.end(await prom.register.metrics());
+  } catch (e) {
+    res.status(500).json({ error: 'Metrics unavailable' });
+  }
+});
 
 // ── 404 Handler ───────────────────────────────────────────────────────────────
 app.use((req, res) => {
@@ -111,6 +146,9 @@ app.use((req, res) => {
 });
 
 // ── Global Error Handler ──────────────────────────────────────────────────────
+// Sentry error handler (registered before the global error handler)
+Sentry.setupExpressErrorHandler(app);
+
 app.use((err, req, res, _next) => {
   console.error('[Server Error]', err.message, err.stack);
   res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
@@ -122,26 +160,33 @@ const websocketService = require('./services/websocketService');
 websocketService.initialize(server);
 
 // ADDITIVE: GTT/SL trigger daemon (15s poll, single-flight, safe no-op if no pendings)
+let gttTimer = null;
+let misTimer = null;
 try {
   const gttEngine = require('./services/gttEngine');
   const ws = require('./services/websocketService');
   const getIo = () => (typeof ws.getIo === 'function' ? ws.getIo() : null);
-  setInterval(() => {
+  gttTimer = setInterval(() => {
     try { gttEngine.checkOnce(getIo()).catch(() => {}); } catch {}
-  }, 15000).unref?.();
+  }, 15000);
+  gttTimer.unref?.();
   console.log('   GTT engine:     ✓ (15s trigger poll)');
   // ADDITIVE: MIS auto square-off check every 60s — fires once at 15:15 IST, cancels pending MIS
-  setInterval(() => {
+  misTimer = setInterval(() => {
     try {
       const ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
       if (ist.getUTCDay() >= 1 && ist.getUTCDay() <= 5 && ist.getUTCHours() === 15 && ist.getUTCMinutes() === 15) {
         require('./services/orderService').squareOffIntradayPositions().catch(() => {});
       }
     } catch {}
-  }, 60000).unref?.();
+  }, 60000);
+  misTimer.unref?.();
 } catch (e) {
   console.warn('   GTT engine failed to start:', e.message);
 }
+
+// Sentry flush on shutdown
+// Sentry flush on shutdown (handled via Sentry.close below)
 
 server.listen(PORT, async () => {
   console.log(`\n🚀 BlockPaperTrade Platform v2.0`);
@@ -167,6 +212,62 @@ server.listen(PORT, async () => {
 
   console.log(`\n   Rate limiting:  ✓ (200/min general, 10/min auth, 30/min orders)`);
   console.log(`   Security:       ✓ (Helmet, CORS, JWT)`);
-  console.log(`   Market data:    Dhan (primary) → Yahoo (fallback)`);
+
+  // ── REAL market data: provider registry + continuous background sync ────────
+  (async () => {
+    try {
+      const { loadMaster } = require('./services/data/instrumentMaster');
+      const registry = require('./services/data/registry');
+      const sync = require('./services/data/continuousSync');
+      const marketDataProvider = require('./services/marketDataProvider');
+
+      const master = await loadMaster();
+      // Start the continuous sync (quotes + candles) - this is what keeps the
+      // whole app live whether or not a Dhan account is configured.
+      sync.start();
+
+      const hasDhan = Boolean(process.env.DHAN_ACCESS_TOKEN) || Boolean(process.env.DHAN_APP_ID && process.env.DHAN_APP_SECRET);
+      const order = registry.order();
+      console.log(`   Market data:    [${order.join(' -> ')}] ${master.raw.length} scrips known`);
+
+      if (!hasDhan) {
+        console.log('                  No Dhan account configured - using the free Yahoo feed.');
+        console.log('                  Real prices for every NSE/BSE symbol, no account needed.');
+      } else {
+        // bring the Dhan live feed up when possible (optional upgrade)
+        try { await marketDataProvider.startFeed(); } catch (e) {
+          console.log(`                  Dhan live stream not up (${e.code || e.message}) - Yahoo carries the feed.`);
+        }
+      }
+    } catch (e) {
+      console.warn(`   Market data:    [!] ${e.message}`);
+    }
+  })();
+
   console.log(`\n   Ready.\n`);
 });
+
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+function shutdown(signal) {
+  console.log(`\n[${signal}] shutting down…`);
+  try { if (gttTimer) clearInterval(gttTimer); } catch {}
+  try { if (misTimer) clearInterval(misTimer); } catch {}
+  try {
+    const sync = require('./services/data/continuousSync');
+    if (typeof sync.stop === 'function') sync.stop();
+  } catch {}
+  server.close(async () => {
+    console.log('HTTP server closed.');
+    try {
+      const ws = require('./services/websocketService');
+      if (typeof ws.close === 'function') ws.close();
+    } catch {}
+    try { await Sentry.close(2000); } catch {}
+    console.log('Server shutdown complete.');
+    process.exit(0);
+  });
+  // Force exit if close hangs (e.g. open sockets)
+  setTimeout(() => { console.log('Force exit.'); process.exit(0); }, 8000).unref?.();
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
