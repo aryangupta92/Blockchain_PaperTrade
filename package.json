@@ -1,15 +1,22 @@
 {
-  "name": "blockchain-papertrade",
-  "version": "1.0.0",
-  "description": "Blockchain Paper Trading Platform for Indian Stock Markets",
+  "name": "blocktrade",
+  "version": "1.1.0",
+  "private": true,
+  "workspaces": [
+    "shared-engine",
+    "backend",
+    "frontend"
+  ],
   "scripts": {
-    "dev": "concurrently \"npm run server\" \"npm run client\"",
-    "server": "npm --prefix server run dev",
-    "client": "npm --prefix client run dev",
-    "install:all": "npm --prefix server install && npm --prefix client install",
-    "start": "npm --prefix server start"
+    "dev:api": "npm --workspace=@broker/api run dev",
+    "dev:web": "npm --workspace=@broker/web run dev",
+    "build": "npm --workspace=@broker/shared run build && npm --workspace=@broker/api run build && npm --workspace=@broker/web run build",
+    "test": "npm --workspace=@broker/shared run test && npm --workspace=@broker/api run test",
+    "typecheck": "npm --workspace=@broker/shared run typecheck && npm --workspace=@broker/api run typecheck && npm --workspace=@broker/web run typecheck",
+    "db:generate": "npm --workspace=@broker/api run db:generate",
+    "db:push": "npm --workspace=@broker/api run db:push"
   },
-  "devDependencies": {
-    "concurrently": "^8.2.2"
+  "engines": {
+    "node": ">=20.0.0"
   }
 }

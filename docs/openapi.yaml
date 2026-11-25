@@ -1,0 +1,190 @@
+openapi: 3.1.0
+info:
+  title: BlockTrade API
+  version: 1.1.0
+  description: >
+    Provider-neutral, SEBI-compliant REST API for dual-account (DEMO + REAL) Indian
+    Equity, F&O, ETF, and MCX Commodity trading with effective-dated statutory charges,
+    TradingView-class chart layout persistence, Regulatory Watch governance, and
+    cryptographic SHA-256 blockchain trade & ledger verification.
+servers:
+  - url: http://localhost:5100/api/v1
+tags:
+  - name: System
+  - name: Auth
+  - name: Accounts & Funding
+  - name: Market Data
+  - name: Orders & Portfolio
+  - name: Charts
+  - name: F&O
+  - name: Segments & Analytics
+  - name: Reports & Tax
+  - name: Regulatory Watch & Admin
+  - name: Blockchain Audit
+  - name: Strategy Lab & Backtest
+  - name: AI Trading Coach & Academy
+paths:
+  /health:
+    get: { tags: [System], summary: Neutral system, feed & blockchain integrity health, responses: { '200': { description: OK } } }
+  /config/regulatory:
+    get: { tags: [System], summary: Effective-dated SEBI, tax, brokerage & exchange rules, responses: { '200': { description: OK } } }
+  /charges/estimate:
+    post: { tags: [System], summary: Pre-trade itemized statutory charges & brokerage calculator, responses: { '200': { description: OK } } }
+
+  /auth/register:
+    post: { tags: [Auth], summary: Register user + provision zero-balance DEMO and REAL accounts, responses: { '201': { description: Created } } }
+  /auth/login:
+    post: { tags: [Auth], summary: Sign in with password + optional TOTP 2FA, responses: { '200': { description: OK } } }
+  /auth/refresh:
+    post: { tags: [Auth], summary: Rotate JWT access token from HttpOnly refresh cookie, responses: { '200': { description: OK } } }
+  /auth/logout:
+    post: { tags: [Auth], summary: Clear session cookie, responses: { '200': { description: OK } } }
+  /auth/me:
+    get: { tags: [Auth], summary: Authenticated user profile + DEMO/REAL accounts, responses: { '200': { description: OK } } }
+  /auth/totp/setup:
+    post: { tags: [Auth], summary: Initialize RFC 6238 Authenticator 2FA secret, responses: { '200': { description: OK } } }
+  /auth/totp/enable:
+    post: { tags: [Auth], summary: Verify 6-digit TOTP code and enable 2FA, responses: { '200': { description: OK } } }
+
+  /accounts:
+    get: { tags: [Accounts & Funding], summary: List DEMO and REAL trading accounts, responses: { '200': { description: OK } } }
+  /accounts/demo/balance:
+    post: { tags: [Accounts & Funding], summary: Set/reset DEMO virtual balance (₹1,000–₹1Cr) with archive + Blockchain proof, responses: { '200': { description: OK } } }
+  /accounts/demo/archives:
+    get: { tags: [Accounts & Funding], summary: View archived DEMO reset epochs, responses: { '200': { description: OK } } }
+  /accounts/{mode}/ledger:
+    get: { tags: [Accounts & Funding], summary: Isolated double-entry ledger per DEMO or REAL account, responses: { '200': { description: OK } } }
+  /accounts/real/funding-summary:
+    get: { tags: [Accounts & Funding], summary: REAL settled withdrawable balance (T+1 aware) & SEBI compliance checklist, responses: { '200': { description: OK } } }
+  /accounts/real/deposit:
+    post: { tags: [Accounts & Funding], summary: REAL funds deposit via PaymentGatewayAdapter (UPI/NetBanking) + Blockchain proof, responses: { '200': { description: OK } } }
+  /accounts/real/withdraw:
+    post: { tags: [Accounts & Funding], summary: Settlement-aware REAL withdrawal + Blockchain proof, responses: { '200': { description: OK } } }
+  /accounts/real/broker-status:
+    get: { tags: [Accounts & Funding], summary: Pluggable RealBrokerAdapter status & SEBI going-live prerequisites, responses: { '200': { description: OK } } }
+
+  /market/status:
+    get: { tags: [Market Data], summary: Neutral feed health, data subscription status & IST Equity/MCX sessions, responses: { '200': { description: OK } } }
+  /market/instruments/search:
+    get: { tags: [Market Data], summary: Fast search across NSE/BSE/MCX daily scrip master, responses: { '200': { description: OK } } }
+  /market/instruments/refresh:
+    post: { tags: [Market Data], summary: Trigger scrip master synchronization, responses: { '200': { description: OK } } }
+  /market/quotes:
+    get: { tags: [Market Data], summary: Live batch quotes with LTP, OHLC, 5-level depth, OI & freshness, responses: { '200': { description: OK } } }
+  /market/candles:
+    get: { tags: [Market Data], summary: Historical daily & intraday OHLCV + OI candles, responses: { '200': { description: OK } } }
+  /market/options/expiries:
+    get: { tags: [Market Data], summary: Live option expiry list for underlying, responses: { '200': { description: OK } } }
+  /market/options/chain:
+    get: { tags: [Market Data], summary: Live option chain with Greeks, IV, OI, PCR & Max Pain, responses: { '200': { description: OK } } }
+  /market/options/rolling:
+    post: { tags: [Market Data], summary: Historical expired/rolling options OHLC/IV/OI data, responses: { '200': { description: OK } } }
+  /market/margin-preview:
+    post: { tags: [Market Data], summary: Live exchange SPAN + Exposure margin calculator (single/multi-leg), responses: { '200': { description: OK } } }
+
+  /orders/preview:
+    post: { tags: [Orders & Portfolio], summary: Pre-trade SEBI risk, VaR+ELM margin & itemized charges preview, responses: { '200': { description: OK } } }
+  /orders:
+    post: { tags: [Orders & Portfolio], summary: Place idempotent order (DEMO or REAL) with Blockchain trade seal, responses: { '201': { description: Created } } }
+    get: { tags: [Orders & Portfolio], summary: Isolated Order Book per account mode, responses: { '200': { description: OK } } }
+  /orders/{id}:
+    put: { tags: [Orders & Portfolio], summary: Modify pending/open order, responses: { '200': { description: OK } } }
+    delete: { tags: [Orders & Portfolio], summary: Cancel pending/open order, responses: { '200': { description: OK } } }
+  /orders/trades:
+    get: { tags: [Orders & Portfolio], summary: Executed Trade Book with itemized statutory charges & Blockchain hashes, responses: { '200': { description: OK } } }
+  /portfolio/{mode}/positions:
+    get: { tags: [Orders & Portfolio], summary: Live MTM Positions per account mode, responses: { '200': { description: OK } } }
+  /portfolio/{mode}/holdings:
+    get: { tags: [Orders & Portfolio], summary: CNC Delivery Holdings (Settled vs T+1 qty), responses: { '200': { description: OK } } }
+  /portfolio/{mode}/positions/square-off:
+    post: { tags: [Orders & Portfolio], summary: Square off an open position, responses: { '200': { description: OK } } }
+  /portfolio/{mode}/positions/convert:
+    post: { tags: [Orders & Portfolio], summary: Convert open long Equity/ETF MIS position to CNC Delivery, responses: { '200': { description: OK } } }
+  /portfolio/{mode}/positions/exit-all:
+    post: { tags: [Orders & Portfolio], summary: Cancel all open orders and market-exit all open positions, responses: { '200': { description: OK } } }
+  /portfolio/{mode}/risk-controls:
+    put: { tags: [Orders & Portfolio], summary: Manage Kill Switch, Max Daily Loss, Max Order Value & Max Open Orders, responses: { '200': { description: OK } } }
+
+  /charts/layouts:
+    get: { tags: [Charts], summary: List saved chart layouts & drawing templates, responses: { '200': { description: OK } } }
+    post: { tags: [Charts], summary: Save or update a chart layout & drawings, responses: { '201': { description: Created } } }
+  /charts/layouts/{id}:
+    delete: { tags: [Charts], summary: Delete a saved chart layout, responses: { '200': { description: OK } } }
+
+  /fno/underlyings:
+    get: { tags: [F&O], summary: Live discovered Index & Stock F&O underlyings + SEBI rules + Ban list, responses: { '200': { description: OK } } }
+  /fno/chain:
+    get: { tags: [F&O], summary: Enriched Option Chain with resolved strike contract symbols & lot sizes, responses: { '200': { description: OK } } }
+  /fno/strategy/analyze:
+    post: { tags: [F&O], summary: Multi-leg expiry payoff curve, Net Greeks, SEBI hedge margin & charges, responses: { '200': { description: OK } } }
+  /fno/basket:
+    post: { tags: [F&O], summary: Execute multi-leg basket (BUY legs routed before SELL legs), responses: { '200': { description: OK } } }
+  /fno/expiry/settle:
+    post: { tags: [F&O], summary: ITM option auto-exercise / assignment settlement with 0.15% exercise STT, responses: { '200': { description: OK } } }
+
+  /segments/etfs:
+    get: { tags: [Segments & Analytics], summary: Categorized NSE/BSE ETF catalog (Gold, Silver, Index, Sectoral, Liquid), responses: { '200': { description: OK } } }
+  /segments/commodities:
+    get: { tags: [Segments & Analytics], summary: Active MCX Commodity Futures & Options explorer, responses: { '200': { description: OK } } }
+  /segments/analytics:
+    get: { tags: [Segments & Analytics], summary: Live 8-Sector Heatmap, Top Gainers, Top Losers & Most Active, responses: { '200': { description: OK } } }
+
+  /reports/{mode}/contract-notes:
+    get: { tags: [Reports & Tax], summary: Daily Contract Notes with itemized levies & net obligation, responses: { '200': { description: OK } } }
+  /reports/{mode}/tax-pnl:
+    get: { tags: [Reports & Tax], summary: FIFO Realized Tax P&L (STCG, LTCG, Speculative, F&O/MCX + ICAI Turnover), responses: { '200': { description: OK } } }
+  /reports/{mode}/export:
+    get: { tags: [Reports & Tax], summary: Download CSV report (trades, ledger, or tax-pnl), responses: { '200': { description: text/csv } } }
+
+  /regulatory/notices:
+    get: { tags: [Regulatory Watch & Admin], summary: User-facing What's Changed approved regulatory updates feed, responses: { '200': { description: OK } } }
+  /regulatory/sources:
+    get: { tags: [Regulatory Watch & Admin], summary: Official Indian regulatory sources monitored daily, responses: { '200': { description: OK } } }
+  /regulatory/dpdp-export:
+    get: { tags: [Regulatory Watch & Admin], summary: DPDP Act (India) personal data & risk consent export, responses: { '200': { description: OK } } }
+  /regulatory/configs:
+    get: { tags: [Regulatory Watch & Admin], summary: "[ADMIN] View all DRAFT/APPROVED/SUPERSEDED effective-dated configs", responses: { '200': { description: OK } } }
+  /regulatory/drafts:
+    post: { tags: [Regulatory Watch & Admin], summary: "[ADMIN] Propose an effective-dated regulatory config draft", responses: { '201': { description: Created } } }
+  /regulatory/drafts/{id}/approve:
+    post: { tags: [Regulatory Watch & Admin], summary: "[ADMIN] Approve draft with effective date & seal Blockchain governance block", responses: { '200': { description: OK } } }
+  /regulatory/drafts/{id}/reject:
+    post: { tags: [Regulatory Watch & Admin], summary: "[ADMIN] Reject a regulatory config draft", responses: { '200': { description: OK } } }
+  /regulatory/watch/run:
+    post: { tags: [Regulatory Watch & Admin], summary: "[ADMIN] Run Regulatory Watch scan now", responses: { '200': { description: OK } } }
+  /regulatory/audit-logs:
+    get: { tags: [Regulatory Watch & Admin], summary: "[ADMIN] View full security & regulatory Audit Log", responses: { '200': { description: OK } } }
+
+  /blockchain/verify:
+    get: { tags: [Blockchain Audit], summary: Cryptographically verify full SHA-256 chain & compute Merkle Root, responses: { '200': { description: OK } } }
+  /blockchain/blocks:
+    get: { tags: [Blockchain Audit], summary: List verifiable SHA-256 blocks (filterable by ALL/DEMO/REAL), responses: { '200': { description: OK } } }
+  /blockchain/blocks/{hash}:
+    get: { tags: [Blockchain Audit], summary: Independent cryptographic hash & chain-linkage verification proof, responses: { '200': { description: OK } } }
+
+  /strategies/presets:
+    get: { tags: [Strategy Lab & Backtest], summary: List 5 starter Indian market rule-based strategy presets, responses: { '200': { description: OK } } }
+  /strategies:
+    get: { tags: [Strategy Lab & Backtest], summary: List user's saved visual strategies, responses: { '200': { description: OK } } }
+    post: { tags: [Strategy Lab & Backtest], summary: Save or update a visual strategy definition, responses: { '201': { description: Created } } }
+  /strategies/{id}:
+    delete: { tags: [Strategy Lab & Backtest], summary: Delete a saved strategy, responses: { '200': { description: OK } } }
+  /strategies/backtest:
+    post: { tags: [Strategy Lab & Backtest], summary: Run zero-look-ahead historical backtest with Finance Act 2026 Indian charges, slippage & MIS 15:15 square-off, responses: { '200': { description: OK } } }
+  /strategies/backtests:
+    get: { tags: [Strategy Lab & Backtest], summary: List saved historical backtest runs, responses: { '200': { description: OK } } }
+  /strategies/backtests/{id}:
+    get: { tags: [Strategy Lab & Backtest], summary: Fetch full backtest trade log & equity curve, responses: { '200': { description: OK } } }
+  /strategies/scan-signal:
+    post: { tags: [Strategy Lab & Backtest], summary: Evaluate latest closed candles for live ENTER_LONG / ENTER_SHORT / EXIT / HOLD signal, responses: { '200': { description: OK } } }
+
+  /coach/chat:
+    post: { tags: [AI Trading Coach & Academy], summary: SEBI-compliant AI Trading Coach Q&A (local-rag / fine-tuned Ollama / Gemini) with stock-tip refusal guardrail, responses: { '200': { description: OK } } }
+  /coach/diagnostics:
+    get: { tags: [AI Trading Coach & Academy], summary: Personal DEMO/REAL trade behavior audit & 0-100 DEMO->REAL Readiness Score, responses: { '200': { description: OK } } }
+  /coach/missions:
+    get: { tags: [AI Trading Coach & Academy], summary: 5 hands-on DEMO practice missions auto-verified against Prisma DB, responses: { '200': { description: OK } } }
+  /coach/curriculum:
+    get: { tags: [AI Trading Coach & Academy], summary: 6-module Beginner-to-Pro Indian Market Academy with user completion progress, responses: { '200': { description: OK } } }
+  /coach/curriculum/{moduleId}/quiz:
+    post: { tags: [AI Trading Coach & Academy], summary: Grade interactive module quiz and persist completion score, responses: { '200': { description: OK } } }

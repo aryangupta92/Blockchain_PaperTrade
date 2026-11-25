@@ -1,98 +1,55 @@
-# BlockTrade 📈⛓️
+<p align="center">
+  <img src="./frontend/public/logo.svg" alt="BlockTrade Logo" width="320" />
+</p>
 
-A high-fidelity, professional-grade, SEBI-compliant paper trading platform for the Indian stock market. It perfectly emulates real broker UI schemas while executing a **Dual-Chain execution model** — logging every trade to a local custom SHA-256 blockchain, as well as to the Ethereum network via MetaMask.
+# BlockTrade — Indian Stock Broker Platform (DEMO + REAL + Blockchain Audit)
 
-![Platform Preview](./client/public/vite.svg) (*Disclaimer: For educational purposes only*)
+A SEBI-compliant, full-stack Indian market trading platform (**NSE / BSE / MCX**) built in TypeScript where every user owns **two strictly isolated trading accounts** — **DEMO** (virtual funds ₹1,000–₹1,00,00,000 with reset archival) and **REAL** (deposited funds via payment gateway adapter, starting at ₹0.00) — sharing one unified OMS, SEBI risk/margin engine, Finance Act 2026 charges engine, TradingView-class charting, Regulatory Watch governance, Strategy Lab, AI Trading Coach, and **cryptographic SHA-256 Proof-of-Work blockchain trade & ledger verification**.
 
-## 🎯 Features
+---
 
-- **Professional Charting**: Integrated TradingView's `lightweight-charts` with real-time zooming, custom horizontal price scale and vertical time scale scrolling, tooltips, crosshairs, and live candelstick rendering.
-- **Historic Data Ranges**: Dynamic chart range selection matching professional applications (1D, 5D, 1M, 3M, 6M, 1Y, 3Y, 5Y, ALL), fetching directly from Yahoo Finance API.
-- **Option Chain Engine**: A fully custom-built Black-Scholes option pricing model built in Node.js calculating Implied Volatility (IV), Delta, Gamma, Theta, Vega, and Put-Call Ratios for NSE options.
-- **Market Dynamics**: Real-time Market Status (Open/Closed), Top Gainers & Losers, FII/DII updates, and Advances/Declines visuals directly mapped to Live Data.
-- **SEBI Compliance**: Enforces maximum position limits, block limits, margins, and warns on low balance to mimic real Indian broker regulations.
-- **Web3 Integration (Dual Chain)**: Every trade and account subscription triggers a local SHA-256 block mining event *AND* an Ethereum Smart Contract transaction via MetaMask on the Sepolia testnet.
+## Project Layout
 
-## 🛠 Tech Stack
+| Directory | Responsibility |
+| --- | --- |
+| `shared-engine/` | Pure TypeScript domain core (`@broker/shared`): decimal math, SEBI regulatory config, Finance Act 2026 tax & charges, SHA-256 blockchain ledger, technical indicators, F&O payoff analyzer, zero-look-ahead strategy backtester |
+| `backend/` | Fastify REST + WebSocket API (`@broker/api`), Prisma ORM, single-source market data engine, unified trading OMS, AI Coach & Beginner Academy, SHA-256 chain persistence |
+| `frontend/` | React 19 + Vite trading terminal (`@broker/web`): Market Watch, TradingView Lightweight Charts, Option Chain & Strategy Analyzer, Strategy Lab & Backtester, AI Coach & Academy, Portfolio/Reports, Blockchain Explorer |
+| `ai-coach-training/` | No-local-GPU QLoRA fine-tuning pipeline for Google Colab T4 + local CPU Ollama deployment (`build_sebi_coach_dataset.py`, `finetune_coach_qlora_colab.py`, `BlockTrade_AI_Coach_Colab_T4.ipynb`, `evaluate_coach_compliance.py`, `Modelfile`) |
+| `contracts/` | `TradeRegistry.sol` optional on-chain Merkle-root anchoring contract |
+| `docs/` | [COMPLIANCE.md](./docs/COMPLIANCE.md), [RULES.md](./docs/RULES.md), [openapi.yaml](./docs/openapi.yaml), [CHANGELOG.md](./docs/CHANGELOG.md) |
 
-Frontend reconstructed entirely from scratch avoiding Tailwind to offer extreme control over premium UI interactions.
+---
 
-### Frontend
-* **React 18** + **Vite**
-* **Vanilla CSS**: Extensively customized global variables and CSS Modules.
-* **Ethers.js (v6)**: For interacting with MetaMask and deploying Ethereum transactions.
-* **Lightweight-Charts**: High-performance canvas-based financial charts.
-* **Recharts**: For dynamic sparklines on the home dashboard.
-* **Lucide React**: For scalable, sharp iconography.
+## Key Modules Implemented
+- **Dual Zero-Start Accounts & Security:** `scrypt` salted hashes, HS256 JWT + `HttpOnly` refresh cookies, AES-256-GCM encrypted RFC 6238 TOTP 2FA, SEBI Risk Disclosure gate, isolated DEMO (₹1,000–₹1,00,00,000 with epoch archival) and REAL accounts, double-entry ledger, and SHA-256 Blockchain Proof Explorer.
+- **Single-Source Market Data:** Daily scrip master (NSE/BSE/MCX), token-bucket rate limiter + 429 circuit breaker, binary live feed + 20-level L3 depth socket, `/ws/market` multiplexed fan-out, IST Equity/F&O & MCX sessions, and 8-sector analytics.
+- **Unified OMS & SEBI Risk Engine:** Per-scrip VaR+ELM margins, Equity CNC (no short selling, T+1 holdings, DP charge, Pledge/MTF) & MIS (`15:15 IST` auto square-off, MIS → CNC conversion), Super Orders (3-leg OCO + Trailing SL), GTT/Baskets/SIPs/Iceberg/AMO, Kill Switch, Exit All, and Blockchain sealing.
+- **TradingView Lightweight Charts & F&O Suite:** 8 timeframes, Heikin Ashi, SMA/EMA/VWAP/Bollinger/Supertrend/RSI/MACD, interactive drawings, saved layouts, live Option Chain with Greeks/PCR/Max Pain, Multi-Leg Strategy Payoff Analyzer, BUY-first baskets, and ITM auto-exercise settlement.
+- **Strategy Lab & Zero-Bias Backtester:** Visual no-code rule builder, 5 starter templates, strict next-bar-open fills, gap SL slippage, conservative SL-before-Target tie-break, MIS `15:15 IST` square-off, exact effective-dated Indian statutory charges, Sharpe/Sortino/Calmar/MaxDD/Fee Drag KPIs, and Live Signal Scanner.
+- **AI Trading Coach & Beginner Academy:** SEBI-compliant Q&A coach (`local-rag` default on CPU, pluggable `ollama` & `gemini`), 6-module Indian Market Academy with persisted quizzes, 5 DB-verified DEMO Practice Missions, and Personal Trade Diagnostics + 0–100 DEMO→REAL Readiness Score.
 
-### Backend
-* **Node.js** + **Express.js** API
-* **Yahoo Finance API (v8)**: Reverse engineered to pull live Nifty 50, Sensex, and individual stock ticks without rate limits.
-* **Crypto (Built-in Node Module)**: Used to write our own Proof-of-Work blockchain (`blockchain.js`) directly in Express for local trade auditing.
+---
 
-### Blockchain & Smart Contracts
-* **Solidity (^0.8.19)**: The core `BlockTrade.sol` handles users, virtual balances, subscriptions, and immutable trade records.
-* **MetaMask**: Provides the Web3 provider for browser injections.
-* **Remix IDE**: Used for compilation and testnet deployment.
+## Quick Start
 
-## 🚀 How to Run the Project Locally
-
-Because the project is split into a **client** (Frontend) and **server** (Backend), you must run both simultaneously.
-
-### 1. Start the Backend API
-Open a terminal and navigate to the `server` folder of the project.
 ```bash
-cd server
 npm install
-npm run dev
-```
-*(The server will start on `http://localhost:5000`)*
+cp .env.example .env   # Configure server-side credentials
+npm run db:generate
+npm run db:push
+npm run typecheck
+npm test
+npm run build
 
-### 2. Start the Frontend Application
-Open a **new** terminal window and navigate to the `client` folder.
-```bash
-cd client
-npm install
-npm run dev
-```
-*(The app will launch on `http://localhost:5173`)*
-
-### 3. Open the App
-Go to `http://localhost:5173` in your browser. 
-- You can create a new account, or use the demo login: 
-  - **Email:** `demo@blocktrade.in`
-  - **Password:** `demo1234`
-
-### 4. Optional: Connect MetaMask
-If you want to test the Web3 Ethereum features:
-1. Ensure the `CONTRACT_ADDRESS` inside `client/src/services/web3.js` matches your deployed contract from Remix.
-2. Click **Connect Wallet** inside the app.
-3. Every time you place an order on the **Trading** tab, MetaMask will pop up and ask you to confirm the blockchain transaction securely.
-
-## 📂 Project Structure
-
-```
-Blockchain_PaperTrade/
-├── blockchain/
-│   └── BlockTrade.sol          # Solidity Smart Contract
-├── server/
-│   ├── routes/
-│   │   ├── auth.js             # User Auth & State management
-│   │   ├── market.js           # Yahoo Finance Live Polling
-│   │   └── trade.js            # Trading & Order logic
-│   ├── services/
-│   │   ├── blockchain.js       # Local custom SHA-256 Ledger
-│   │   └── optionsPricing.js   # Black-Scholes Greeks Engine
-│   └── server.js               # Express entry point
-└── client/
-    ├── src/
-    │   ├── components/         # All React Components (BrokerShell, Chart, Market, etc.)
-    │   ├── services/
-    │   │   ├── api.js          # Express Backend Interceptor
-    │   │   └── web3.js         # Ethers.js MetaMask Contract Interface
-    │   └── App.jsx             # Main Router & Global State
+# Run API (http://localhost:5100) and Web Terminal (http://localhost:5174)
+npm run dev:api
+npm run dev:web
 ```
 
-## ⚖️ Disclaimer
-
-**This is a Paper Trading Simulator**. It connects to live markets for educational testing of financial modeling, interface design, algorithms, and blockchain auditing. No real monetary transactions ever take place. Simulated capital cannot be withdrawn.
+## Documentation
+- [COMPLIANCE.md](./docs/COMPLIANCE.md) — SEBI rules, citations, mandatory risk disclosures & going-live broker licensing checklist
+- [RULES.md](./docs/RULES.md) — Effective-dated tax, fee, margin, and expiry configuration map
+- [docs/openapi.yaml](./docs/openapi.yaml) — Complete OpenAPI 3.1 REST specification
+- [docs/CHANGELOG.md](./docs/CHANGELOG.md) — Phase-by-phase build log
+- [ai-coach-training/README.md](./ai-coach-training/README.md) — Custom QLoRA LLM fine-tuning & Ollama deployment guide

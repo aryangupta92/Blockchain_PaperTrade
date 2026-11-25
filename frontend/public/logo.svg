@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 72" fill="none">
+  <defs>
+    <linearGradient id="bt-bg" x1="6" y1="6" x2="62" y2="66" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#132035"/>
+      <stop offset="100%" stop-color="#090d16"/>
+    </linearGradient>
+    <linearGradient id="bt-ring" x1="8" y1="8" x2="60" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="55%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+    <linearGradient id="bt-text-accent" x1="150" y1="14" x2="255" y2="52" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#38bdf8"/>
+    </linearGradient>
+    <linearGradient id="bt-trend" x1="20" y1="48" x2="50" y2="21" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="65%" stop-color="#34d399"/>
+      <stop offset="100%" stop-color="#fbbf24"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Emblem Mark -->
+  <g transform="translate(4, 4)">
+    <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#bt-bg)" stroke="url(#bt-ring)" stroke-width="2.2"/>
+    <polygon points="32,10 51,21 51,43 32,54 13,43 13,21" fill="#0d1726" stroke="url(#bt-ring)" stroke-width="2" stroke-linejoin="round"/>
+    <polygon points="32,32 13,21 13,43 32,54" fill="#0f293a" opacity="0.85"/>
+    <polygon points="32,32 51,21 51,43 32,54" fill="#113847" opacity="0.85"/>
+    <rect x="20" y="34" width="4.4" height="9" rx="1.2" fill="#38bdf8"/>
+    <line x1="22.2" y1="31" x2="22.2" y2="45" stroke="#38bdf8" stroke-width="1.4" stroke-linecap="round"/>
+    <rect x="29.8" y="28" width="4.4" height="12" rx="1.2" fill="#10b981"/>
+    <line x1="32" y1="24.5" x2="32" y2="43" stroke="#10b981" stroke-width="1.5" stroke-linecap="round"/>
+    <rect x="39.6" y="21" width="4.4" height="14" rx="1.2" fill="#fbbf24"/>
+    <line x1="41.8" y1="17.5" x2="41.8" y2="38" stroke="#fbbf24" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M18 43 L29 33 L35 36.5 L46 21" stroke="url(#bt-trend)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M40.5 21.5 L46.2 20.6 L45.8 26.5" stroke="#fbbf24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="32" cy="10" r="2.6" fill="#10b981" stroke="#090d16" stroke-width="1"/>
+    <circle cx="51" cy="43" r="2.2" fill="#38bdf8" stroke="#090d16" stroke-width="1"/>
+    <circle cx="13" cy="43" r="2.2" fill="#f59e0b" stroke="#090d16" stroke-width="1"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="80" y="42" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="30" font-weight="800" letter-spacing="-0.8" fill="#f1f5f9">
+    Block<tspan fill="url(#bt-text-accent)">Trade</tspan>
+  </text>
+  <text x="81" y="57" font-family="'JetBrains Mono', ui-monospace, monospace" font-size="9.5" font-weight="600" letter-spacing="1.8" fill="#94a3b8">
+    SHA-256 VERIFIED INDIAN MARKETS
+  </text>
+</svg>

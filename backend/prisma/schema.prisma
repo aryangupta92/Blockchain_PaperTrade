@@ -1,0 +1,655 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Local dev uses SQLite; for production PostgreSQL change provider to "postgresql"
+// and point DATABASE_URL to PostgreSQL (see docker-compose.yml).
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                  String                 @id @default(uuid())
+  email               String                 @unique
+  fullName            String
+  passwordHash        String
+  role                String                 @default("USER") // USER | ADMIN | SUPPORT
+  totpEnabled         Boolean                @default(false)
+  totpSecretEncrypted String?
+  kycStatus           String                 @default("NOT_STARTED") // NOT_STARTED | PENDING | VERIFIED
+  sebiRiskAckAt       DateTime?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+
+  accounts            TradingAccount[]
+  auditLogs           AuditLog[]
+  watchlists          Watchlist[]
+  chartLayouts        ChartLayout[]
+  strategies          TradingStrategy[]
+  backtestRuns        BacktestRun[]
+  learningProgress    UserLearningProgress[]
+  basketTemplates     BasketTemplate[]
+  journalNotes        TradeJournalNote[]
+  priceAlerts         PriceAlert[]
+  webhookEndpoint     WebhookEndpoint?
+  webhookLogs         WebhookLog[]
+  screenerTemplates   ScreenerTemplate[]
+}
+
+model TradingAccount {
+  id                 String               @id @default(uuid())
+  userId             String
+  mode               String               // DEMO | REAL
+  cashBalance        String               @default("0.00") // Decimal string (paise exact)
+  blockedMargin      String               @default("0.00")
+  collateralMargin   String               @default("0.00") // From Holdings Instant Pledge
+  resetEpoch         Int                  @default(1)      // Increments on DEMO reset
+  killSwitchOn       Boolean              @default(false)
+  lockedSegmentsJson String               @default("[]")   // e.g. ["FNO","COMM"]
+  maxDailyLoss       String?
+  dailyProfitTarget  String?
+  enableAutoPnlExit  Boolean              @default(false)
+  pnlExitKillSwitch  Boolean              @default(false)
+  maxOrderValue      String?
+  maxOpenOrders      Int                  @default(50)
+  maxTradesPerDay    Int?
+  lossStreakLimit    Int?
+  cooldownMinutes    Int                  @default(30)
+  cooldownUntil      DateTime?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  user               User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ledgerEntries      LedgerEntry[]
+  orders             Order[]
+  trades             Trade[]
+  positions          Position[]
+  holdings           Holding[]
+  demoArchives       DemoResetArchive[]
+  foreverOrders      ForeverOrder[]
+  conditionalTriggers ConditionalTrigger[]
+  draftOrders        DraftOrder[]
+  stockSips          StockSip[]
+  pledgeRecords      PledgeRecord[]
+  mtfPositions       MtfPosition[]
+
+  @@unique([userId, mode])
+}
+
+model DemoResetArchive {
+  id                String         @id @default(uuid())
+  accountId         String
+  epoch             Int
+  startingBalance   String
+  endingCashBalance String
+  realizedPnl       String
+  totalTrades       Int
+  archivedAt        DateTime       @default(now())
+
+  account           TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+}
+
+model LedgerEntry {
+  id             String         @id @default(uuid())
+  accountId      String
+  epoch          Int            @default(1)
+  entryType      String         // DEMO_SET | DEMO_RESET | DEPOSIT | WITHDRAWAL | TRADE | CHARGES | MTM | MARGIN_BLOCK | MARGIN_RELEASE | PLEDGE | MTF_INTEREST
+  debit          String         @default("0.00")
+  credit         String         @default("0.00")
+  runningBalance String
+  referenceId    String?
+  description    String
+  createdAt      DateTime       @default(now())
+
+  account        TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, createdAt])
+}
+
+model BlockchainBlock {
+  id           String   @id @default(uuid())
+  index        Int      @unique
+  timestamp    String
+  previousHash String
+  payloadJson  String
+  nonce        Int
+  hash         String   @unique
+  recordId     String
+  kind         String   // GENESIS | TRADE_EXECUTION | DEMO_BALANCE_RESET | FUND_DEPOSIT | FUND_WITHDRAWAL | REGULATORY_CONFIG_APPROVAL
+  accountMode  String   // SYSTEM | DEMO | REAL
+  accountId    String
+  userId       String
+  evmTxHash    String?  // Optional on-chain anchor tx hash
+  createdAt    DateTime @default(now())
+
+  @@index([userId, accountMode])
+  @@index([recordId])
+}
+
+model Instrument {
+  id              String         @id @default(uuid())
+  providerSecId   String         // Internal provider security id (never branded in UI)
+  exchange        String         // NSE | BSE | MCX
+  segment         String         // EQ | FNO | ETF | COMM
+  symbol          String
+  displayName     String
+  instrumentKind  String         // EQUITY | INDEX | ETF | FUTURES | OPTIONS
+  isin            String?
+  lotSize         Int            @default(1)
+  tickSize        String         @default("0.05")
+  freezeQty       Int?
+  expiryDate      String?
+  strikePrice     String?
+  optionType      String?        // CE | PE
+  inFnoBan        Boolean        @default(false)
+  varElmMarginPct String         @default("20.00") // Upfront VaR + ELM %
+  mtfLeverage     String         @default("1.00")  // From detailed scrip master MTF_LEVERAGE
+  upperCircuit    String?
+  lowerCircuit    String?
+  asmGsmFlag      String?
+  bracketEligible Boolean        @default(true)
+  coverEligible   Boolean        @default(true)
+  updatedAt       DateTime       @updatedAt
+
+  orders          Order[]
+  trades          Trade[]
+  positions       Position[]
+  holdings        Holding[]
+  foreverOrders   ForeverOrder[]
+  pledgeRecords   PledgeRecord[]
+  mtfPositions    MtfPosition[]
+
+  @@unique([exchange, segment, providerSecId])
+  @@index([symbol])
+  @@index([segment, exchange])
+}
+
+model Order {
+  id              String         @id @default(uuid())
+  idempotencyKey  String         @unique
+  accountId       String
+  epoch           Int            @default(1)
+  instrumentId    String
+  side            String         // BUY | SELL
+  product         String         // CNC | MIS | NRML | MTF
+  orderType       String         // MARKET | LIMIT | SL | SL_M | BO | CO | SUPER | GTT
+  validity        String         @default("DAY") // DAY | IOC | GTT
+  isAmo           Boolean        @default(false)
+  quantity        Int
+  filledQuantity  Int            @default(0)
+  price           String?
+  triggerPrice    String?
+  stopLoss        String?
+  target          String?
+  trailingJump    String?
+  parentOrderId   String?        // Links Super/BO/CO target & SL child legs to entry order
+  ocoGroupId      String?        // Links OCO sibling legs so fill cancels sibling
+  sliceGroupId    String?        // Links Iceberg / Freeze-Qty sliced legs
+  legRole         String?        // ENTRY | TARGET | STOP_LOSS | SLICE
+  peakPrice       String?        // High-water / low-water mark for Trailing SL ratchet
+  status          String         @default("PENDING")
+  rejectionReason String?
+  externalOrderId String?        // Populated only for REAL broker adapter orders
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  account         TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  instrument      Instrument     @relation(fields: [instrumentId], references: [id])
+  events          OrderEvent[]
+  trades          Trade[]
+
+  @@index([accountId, status])
+  @@index([ocoGroupId])
+  @@index([parentOrderId])
+}
+
+model OrderEvent {
+  id        String   @id @default(uuid())
+  orderId   String
+  status    String
+  message   String
+  createdAt DateTime @default(now())
+
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+}
+
+model Trade {
+  id              String           @id @default(uuid())
+  accountId       String
+  epoch           Int              @default(1)
+  orderId         String
+  instrumentId    String
+  side            String
+  product         String
+  quantity        Int
+  price           String
+  turnover        String
+  executedAt      DateTime         @default(now())
+  blockchainHash  String?
+
+  account         TradingAccount   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  order           Order            @relation(fields: [orderId], references: [id])
+  instrument      Instrument       @relation(fields: [instrumentId], references: [id])
+  chargeBreakdown ChargeBreakdown?
+
+  @@index([accountId, executedAt])
+}
+
+model ChargeBreakdown {
+  id                        String   @id @default(uuid())
+  tradeId                   String   @unique
+  asOfDate                  String
+  brokerage                 String
+  sttOrCtt                  String
+  exchangeTransactionCharge String
+  sebiTurnoverFee           String
+  stampDuty                 String
+  dpChargeExclGst           String
+  gst                       String
+  totalCharges              String
+  createdAt                 DateTime @default(now())
+
+  trade                     Trade    @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+}
+
+model Position {
+  id            String         @id @default(uuid())
+  accountId     String
+  epoch         Int            @default(1)
+  instrumentId  String
+  product       String         // MIS | NRML | CNC | MTF
+  netQuantity   Int            @default(0)
+  avgBuyPrice   String         @default("0.00")
+  avgSellPrice  String         @default("0.00")
+  realizedPnl   String         @default("0.00")
+  blockedMargin String         @default("0.00")
+  updatedAt     DateTime       @updatedAt
+
+  account       TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  instrument    Instrument     @relation(fields: [instrumentId], references: [id])
+
+  @@unique([accountId, epoch, instrumentId, product])
+}
+
+model Holding {
+  id            String         @id @default(uuid())
+  accountId     String
+  epoch         Int            @default(1)
+  instrumentId  String
+  settledQty    Int            @default(0)
+  t1Qty         Int            @default(0) // Unsettled T+1 quantity
+  pledgedQty    Int            @default(0) // Qty pledged for collateral margin
+  avgCost       String         @default("0.00")
+  updatedAt     DateTime       @updatedAt
+
+  account       TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  instrument    Instrument     @relation(fields: [instrumentId], references: [id])
+
+  @@unique([accountId, epoch, instrumentId])
+}
+
+model RegulatoryConfig {
+  id            String    @id @default(uuid())
+  configKey     String
+  effectiveFrom String
+  payloadJson   String
+  verification  String    // VERIFIED | TO_VERIFY | PLACEHOLDER
+  citation      String
+  status        String    @default("APPROVED") // DRAFT | APPROVED | SUPERSEDED
+  approvedBy    String?
+  approvedAt    DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@unique([configKey, effectiveFrom])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  action    String
+  entity    String
+  entityId  String?
+  details   String?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+}
+
+model Watchlist {
+  id          String          @id @default(uuid())
+  userId      String
+  name        String
+  segment     String          @default("ALL") // ALL | EQ | FNO | ETF | COMM
+  symbolsJson String          @default("[]")
+  sortOrder   Int             @default(0)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items       WatchlistItem[]
+
+  @@index([userId, sortOrder])
+}
+
+model WatchlistItem {
+  id          String    @id @default(uuid())
+  watchlistId String
+  sectionName String    @default("General")
+  symbol      String
+  exchange    String    @default("NSE")
+  segment     String    @default("EQ")
+  colorTag    String?   // RED | ORANGE | YELLOW | GREEN | BLUE | PURPLE
+  sortOrder   Int       @default(0)
+  createdAt   DateTime  @default(now())
+
+  watchlist   Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+
+  @@unique([watchlistId, symbol])
+  @@index([watchlistId, sortOrder])
+}
+
+model ChartLayout {
+  id         String   @id @default(uuid())
+  userId     String
+  name       String
+  layoutJson String
+  updatedAt  DateTime @updatedAt
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model TradingStrategy {
+  id             String        @id @default(uuid())
+  userId         String
+  name           String
+  description    String?
+  exchange       String        @default("NSE")
+  segment        String        @default("EQ")
+  product        String        @default("CNC")
+  definitionJson String
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  backtestRuns   BacktestRun[]
+
+  @@index([userId, updatedAt])
+}
+
+model BacktestRun {
+  id              String           @id @default(uuid())
+  userId          String
+  strategyId      String?
+  strategyName    String
+  symbol          String
+  exchange        String
+  segment         String
+  interval        String
+  fromDate        String
+  toDate          String
+  initialCapital  String
+  finalEquity     String
+  netReturnPct    String
+  maxDrawdownPct  String
+  sharpeRatio     String
+  totalTrades     Int
+  totalCharges    String
+  metricsJson     String
+  equityCurveJson String
+  tradesJson      String
+  createdAt       DateTime         @default(now())
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  strategy        TradingStrategy? @relation(fields: [strategyId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+}
+
+model UserLearningProgress {
+  id          String    @id @default(uuid())
+  userId      String
+  moduleId    String
+  status      String    @default("IN_PROGRESS") // IN_PROGRESS | COMPLETED
+  quizScore   Int?
+  completedAt DateTime?
+  updatedAt   DateTime  @updatedAt
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, moduleId])
+}
+
+// ── Sprint 2: Forever Orders (GTT Single & OCO — 365-day validity) ────────────
+model ForeverOrder {
+  id                 String         @id @default(uuid())
+  accountId          String
+  instrumentId       String
+  orderFlag          String         @default("SINGLE") // SINGLE | OCO
+  side               String         // BUY | SELL
+  product            String         // CNC | NRML | MTF
+  quantity           Int
+  triggerPrice       String         // Primary trigger (or Target trigger for OCO)
+  limitPrice         String
+  triggerDirection   String         @default("GTE") // GTE | LTE
+  triggerPrice2      String?        // Stop-loss trigger for OCO
+  limitPrice2        String?        // Stop-loss limit for OCO
+  status             String         @default("ACTIVE") // ACTIVE | TRIGGERED | CANCELLED | EXPIRED
+  triggeredOrderId   String?
+  expiresAt          DateTime
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  account            TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  instrument         Instrument     @relation(fields: [instrumentId], references: [id])
+
+  @@index([accountId, status])
+}
+
+// ── Sprint 2: Conditional Price / Technical Indicator Multi-Order Triggers ────
+model ConditionalTrigger {
+  id            String         @id @default(uuid())
+  accountId     String
+  symbol        String
+  conditionJson String         // { indicator, timeframe, operator, value }
+  ordersJson    String         // Array of order payloads to place on trigger
+  frequency     String         @default("ONCE") // ONCE | RECURRING
+  note          String?
+  status        String         @default("ACTIVE") // ACTIVE | TRIGGERED | CANCELLED | EXPIRED
+  expiresAt     DateTime
+  triggeredAt   DateTime?
+  createdAt     DateTime       @default(now())
+
+  account       TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, status])
+}
+
+// ── Sprint 2: Saved Basket Templates, Draft Orders & Stock/ETF SIPs ───────────
+model BasketTemplate {
+  id        String   @id @default(uuid())
+  userId    String
+  name      String
+  legsJson  String   // [{ symbol, exchange, side, product, orderType, quantity, price? }]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, updatedAt])
+}
+
+model DraftOrder {
+  id          String         @id @default(uuid())
+  accountId   String
+  symbol      String
+  side        String
+  product     String
+  orderType   String
+  quantity    Int
+  payloadJson String
+  note        String?
+  createdAt   DateTime       @default(now())
+
+  account     TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, createdAt])
+}
+
+model StockSip {
+  id          String         @id @default(uuid())
+  accountId   String
+  symbol      String
+  mode        String         @default("AMOUNT") // AMOUNT | QTY
+  value       String
+  frequency   String         @default("MONTHLY") // DAILY | WEEKLY | MONTHLY
+  nextRunAt   DateTime
+  lastRunAt   DateTime?
+  active      Boolean        @default(true)
+  runsCount   Int            @default(0)
+  createdAt   DateTime       @default(now())
+
+  account     TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, active])
+}
+
+// ── Sprint 4: Option Chain Time-Series Collector (Straddle / Multi-OI / PCR) ──
+model OptionChainSnapshot {
+  id          String   @id @default(uuid())
+  underlying  String
+  expiry      String
+  capturedAt  DateTime @default(now())
+  spotPrice   String
+  atmStrike   Float
+  atmStraddle Float
+  totalCeOi   Int
+  totalPeOi   Int
+  pcrOi       Float
+  maxPain     Float
+  strikesJson String   // Compact array of ATM ± 10 strikes (strike, ceOi, peOi, ceChgOi, peChgOi, ceLtp, peLtp, ceIv, peIv)
+
+  @@index([underlying, expiry, capturedAt])
+}
+
+// ── Sprint 6: Holdings Instant Margin Pledge & MTF (4x) Positions ─────────────
+model PledgeRecord {
+  id              String         @id @default(uuid())
+  accountId       String
+  instrumentId    String
+  pledgedQty      Int
+  referencePrice  String
+  haircutPct      String         // e.g. "20.00"
+  collateralValue String
+  status          String         @default("PLEDGED") // PLEDGED | UNPLEDGED
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  account         TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  instrument      Instrument     @relation(fields: [instrumentId], references: [id])
+
+  @@index([accountId, status])
+}
+
+model MtfPosition {
+  id              String         @id @default(uuid())
+  accountId       String
+  epoch           Int            @default(1)
+  instrumentId    String
+  quantity        Int
+  avgPrice        String
+  leverage        String         @default("4.00")
+  clientMargin    String
+  fundedAmount    String
+  interestRatePct String         @default("14.99") // Annualized %
+  accruedInterest String         @default("0.00")
+  status          String         @default("OPEN") // OPEN | CONVERTED | CLOSED
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  account         TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  instrument      Instrument     @relation(fields: [instrumentId], references: [id])
+
+  @@index([accountId, status])
+}
+
+// ── Sprint 5 & 6: Screener Templates, Trader's Diary, Alerts & Webhooks ───────
+model TradeJournalNote {
+  id         String   @id @default(uuid())
+  userId     String
+  tradeId    String?
+  tradeDate  String   // YYYY-MM-DD
+  symbol     String?
+  setupTag   String?  // ORB Breakout | Iron Condor | VWAP Pullback | Swing
+  emotionTag String?  // Calm | Confident | FOMO | Revenge | Fearful
+  mistakeTag String?  // None | Moved SL | Overtraded | Early Exit | Oversized
+  rating     Int?     // 1..5
+  notes      String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, tradeDate])
+}
+
+model PriceAlert {
+  id          String    @id @default(uuid())
+  userId      String
+  symbol      String
+  condition   String    // PRICE_ABOVE | PRICE_BELOW | PCT_MOVE | RSI_LT | RSI_GT | VWAP_CROSS
+  targetValue String
+  timeframe   String?
+  note        String?
+  status      String    @default("ACTIVE") // ACTIVE | TRIGGERED | PAUSED
+  triggeredAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+}
+
+model WebhookEndpoint {
+  id             String   @id @default(uuid())
+  userId         String   @unique
+  urlToken       String   @unique
+  secretEncrypted String
+  active         Boolean  @default(true)
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model WebhookLog {
+  id          String   @id @default(uuid())
+  userId      String
+  payloadJson String
+  status      String   // EXECUTED | REJECTED
+  orderIds    String?
+  error       String?
+  latencyMs   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model ScreenerTemplate {
+  id        String   @id @default(uuid())
+  userId    String?  // null for system templates
+  name      String
+  category  String   // INTRADAY | TECHNICAL | FNO | FUNDAMENTAL
+  astJson   String
+  createdAt DateTime @default(now())
+
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, category])
+}
