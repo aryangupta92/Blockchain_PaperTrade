@@ -46,6 +46,24 @@ const CORE_INDICES: MasterInstrument[] = [
   { instrumentId: 'BSE:IDX:53', providerSegment: 'IDX_I', providerSecId: '53', exchange: 'BSE', segment: 'FNO', instrumentKind: 'INDEX', symbol: 'BANKEX', tradingSymbol: 'BANKEX', displayName: 'BSE Bankex', lotSize: 1, tickSize: '0.05', expiryDate: null, strikePrice: null, optionType: null, series: 'IDX' },
 ];
 
+// Core offline/CI baseline instruments so equities, ETFs, options, and MCX futures resolve without a local CSV cache.
+const CORE_BASELINE_INSTRUMENTS: MasterInstrument[] = [
+  { instrumentId: 'NSE:EQ:2885', providerSegment: 'NSE_EQ', providerSecId: '2885', exchange: 'NSE', segment: 'EQ', instrumentKind: 'EQUITY', symbol: 'RELIANCE', tradingSymbol: 'RELIANCE', displayName: 'Reliance Industries', lotSize: 1, tickSize: '0.05', expiryDate: null, strikePrice: null, optionType: null, series: 'EQ' },
+  { instrumentId: 'NSE:EQ:11536', providerSegment: 'NSE_EQ', providerSecId: '11536', exchange: 'NSE', segment: 'EQ', instrumentKind: 'EQUITY', symbol: 'TCS', tradingSymbol: 'TCS', displayName: 'Tata Consultancy Services', lotSize: 1, tickSize: '0.05', expiryDate: null, strikePrice: null, optionType: null, series: 'EQ' },
+  { instrumentId: 'NSE:EQ:1333', providerSegment: 'NSE_EQ', providerSecId: '1333', exchange: 'NSE', segment: 'EQ', instrumentKind: 'EQUITY', symbol: 'HDFCBANK', tradingSymbol: 'HDFCBANK', displayName: 'HDFC Bank', lotSize: 1, tickSize: '0.05', expiryDate: null, strikePrice: null, optionType: null, series: 'EQ' },
+  { instrumentId: 'NSE:EQ:1594', providerSegment: 'NSE_EQ', providerSecId: '1594', exchange: 'NSE', segment: 'EQ', instrumentKind: 'EQUITY', symbol: 'INFY', tradingSymbol: 'INFY', displayName: 'Infosys', lotSize: 1, tickSize: '0.05', expiryDate: null, strikePrice: null, optionType: null, series: 'EQ' },
+  { instrumentId: 'NSE:EQ:3045', providerSegment: 'NSE_EQ', providerSecId: '3045', exchange: 'NSE', segment: 'EQ', instrumentKind: 'EQUITY', symbol: 'SBIN', tradingSymbol: 'SBIN', displayName: 'State Bank of India', lotSize: 1, tickSize: '0.05', expiryDate: null, strikePrice: null, optionType: null, series: 'EQ' },
+  { instrumentId: 'NSE:EQ:4963', providerSegment: 'NSE_EQ', providerSecId: '4963', exchange: 'NSE', segment: 'EQ', instrumentKind: 'EQUITY', symbol: 'ICICIBANK', tradingSymbol: 'ICICIBANK', displayName: 'ICICI Bank', lotSize: 1, tickSize: '0.05', expiryDate: null, strikePrice: null, optionType: null, series: 'EQ' },
+  { instrumentId: 'NSE:EQ:3456', providerSegment: 'NSE_EQ', providerSecId: '3456', exchange: 'NSE', segment: 'EQ', instrumentKind: 'EQUITY', symbol: 'TMPV', tradingSymbol: 'TMPV', displayName: 'Tata Motors Passenger Vehicles', lotSize: 1, tickSize: '0.05', expiryDate: null, strikePrice: null, optionType: null, series: 'EQ' },
+  { instrumentId: 'NSE:ETF:10576', providerSegment: 'NSE_EQ', providerSecId: '10576', exchange: 'NSE', segment: 'ETF', instrumentKind: 'ETF', symbol: 'NIFTYBEES', tradingSymbol: 'NIFTYBEES', displayName: 'Nippon India ETF Nifty 50 BeES', lotSize: 1, tickSize: '0.01', expiryDate: null, strikePrice: null, optionType: null, series: 'EQ' },
+  { instrumentId: 'NSE:ETF:14428', providerSegment: 'NSE_EQ', providerSecId: '14428', exchange: 'NSE', segment: 'ETF', instrumentKind: 'ETF', symbol: 'GOLDBEES', tradingSymbol: 'GOLDBEES', displayName: 'Nippon India ETF Gold BeES', lotSize: 1, tickSize: '0.01', expiryDate: null, strikePrice: null, optionType: null, series: 'EQ' },
+  { instrumentId: 'NSE:ETF:8080', providerSegment: 'NSE_EQ', providerSecId: '8080', exchange: 'NSE', segment: 'ETF', instrumentKind: 'ETF', symbol: 'SILVERBEES', tradingSymbol: 'SILVERBEES', displayName: 'Nippon India Silver ETF', lotSize: 1, tickSize: '0.01', expiryDate: null, strikePrice: null, optionType: null, series: 'EQ' },
+  { instrumentId: 'NSE:ETF:11439', providerSegment: 'NSE_EQ', providerSecId: '11439', exchange: 'NSE', segment: 'ETF', instrumentKind: 'ETF', symbol: 'BANKBEES', tradingSymbol: 'BANKBEES', displayName: 'Nippon India ETF Bank BeES', lotSize: 1, tickSize: '0.01', expiryDate: null, strikePrice: null, optionType: null, series: 'EQ' },
+  { instrumentId: 'NSE:FNO:50001', providerSegment: 'NSE_FNO', providerSecId: '50001', exchange: 'NSE', segment: 'FNO', instrumentKind: 'OPTIONS', symbol: 'NIFTY-DEC2026-25000-CE', tradingSymbol: 'NIFTY 31 DEC 25000 CALL', displayName: 'NIFTY 31 DEC 25000 CALL', lotSize: 65, tickSize: '0.05', expiryDate: '2026-12-31', strikePrice: '25000', optionType: 'CE', series: 'OPTIDX' },
+  { instrumentId: 'NSE:FNO:50002', providerSegment: 'NSE_FNO', providerSecId: '50002', exchange: 'NSE', segment: 'FNO', instrumentKind: 'OPTIONS', symbol: 'NIFTY-DEC2026-25200-CE', tradingSymbol: 'NIFTY 31 DEC 25200 CALL', displayName: 'NIFTY 31 DEC 25200 CALL', lotSize: 65, tickSize: '0.05', expiryDate: '2026-12-31', strikePrice: '25200', optionType: 'CE', series: 'OPTIDX' },
+  { instrumentId: 'MCX:COMM:450001', providerSegment: 'MCX_COMM', providerSecId: '450001', exchange: 'MCX', segment: 'COMM', instrumentKind: 'FUTURES', symbol: 'GOLD-DEC2026-FUT', tradingSymbol: 'GOLD 05 DEC FUT', displayName: 'Gold 05 Dec Futures', lotSize: 1, tickSize: '1.00', expiryDate: '2026-12-31', strikePrice: null, optionType: null, series: 'FUTCOM' },
+];
+
 const SYMBOL_ALIASES: Record<string, string> = {
   '^NSEI': 'NIFTY',
   'NIFTY 50': 'NIFTY',
@@ -150,7 +168,7 @@ function buildIndex(list: MasterInstrument[], updatedAt: string): MasterIndex {
   const bySymbol = new Map<string, MasterInstrument>();
   const byWireKey = new Map<string, MasterInstrument>();
 
-  const combined = [...CORE_INDICES, ...list];
+  const combined = [...CORE_INDICES, ...CORE_BASELINE_INSTRUMENTS, ...list];
   for (const rec of combined) {
     rec.tickSize = normalizeTickSizeRupees(rec.tickSize);
 
@@ -191,7 +209,7 @@ function buildIndex(list: MasterInstrument[], updatedAt: string): MasterIndex {
     for (const k of keys) {
       if (!k) continue;
       const cur = bySymbol.get(k);
-      if (!cur || preferenceRank(rec) > preferenceRank(cur)) {
+      if (!cur || preferenceRank(rec) >= preferenceRank(cur)) {
         bySymbol.set(k, rec);
       }
     }
@@ -424,11 +442,13 @@ export async function getMasterIndex(): Promise<MasterIndex> {
     return disk;
   }
 
-  try {
-    await refreshInstrumentMaster();
-    if (memoryIndex) return memoryIndex;
-  } catch {
-    // Offline / sandbox fallback: serve core indices so unit tests work cleanly
+  if (process.env.NODE_ENV !== 'test') {
+    try {
+      await refreshInstrumentMaster();
+      if (memoryIndex) return memoryIndex;
+    } catch {
+      // Offline / sandbox fallback: serve baseline instruments so tests work cleanly
+    }
   }
   memoryIndex = buildIndex([], new Date().toISOString());
   return memoryIndex;

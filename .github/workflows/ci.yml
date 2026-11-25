@@ -9,6 +9,11 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: "file:./dev.db"
+      JWT_SECRET: "ci_test_jwt_secret_minimum_32_characters_long_12345"
+      JWT_REFRESH_SECRET: "ci_test_jwt_refresh_secret_min_32_characters_12345"
+      ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -20,6 +25,8 @@ jobs:
         run: npm ci || npm install
       - name: Generate Prisma client
         run: npm run db:generate
+      - name: Push Prisma SQLite schema
+        run: npm run db:push
       - name: Typecheck all workspaces
         run: npm run typecheck
       - name: Run unit & integration tests

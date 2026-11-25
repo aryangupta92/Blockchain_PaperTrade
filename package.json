@@ -11,8 +11,8 @@
     "dev:api": "npm --workspace=@broker/api run dev",
     "dev:web": "npm --workspace=@broker/web run dev",
     "build": "npm --workspace=@broker/shared run build && npm --workspace=@broker/api run build && npm --workspace=@broker/web run build",
-    "test": "npm --workspace=@broker/shared run test && npm --workspace=@broker/api run test",
-    "typecheck": "npm --workspace=@broker/shared run typecheck && npm --workspace=@broker/api run typecheck && npm --workspace=@broker/web run typecheck",
+    "test": "npm --workspace=@broker/shared run build && npm --workspace=@broker/shared run test && npm --workspace=@broker/api run test",
+    "typecheck": "npm --workspace=@broker/shared run build && npm --workspace=@broker/api run typecheck && npm --workspace=@broker/web run typecheck",
     "db:generate": "npm --workspace=@broker/api run db:generate",
     "db:push": "npm --workspace=@broker/api run db:push"
   },
