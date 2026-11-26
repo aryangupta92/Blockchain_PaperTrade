@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, Layers, Radio, RefreshCw, Search } from 'lucide-react';
-import { api, formatINR } from '../apiClient';
+import { api, formatINR, getMarketWsUrl } from '../apiClient';
 import { InstrumentInspectorPanel } from './InstrumentInspectorPanel';
 
 interface QuoteItem {
@@ -100,32 +100,44 @@ export function MarketPage({ view, onTradeClick, onChartClick, onOptionChainClic
   }, [view]);
 
   useEffect(() => {
-    api.marketStatus().then(setStatus).catch(() => setStatus(null));
-  }, []);
+    const refreshStatusAndAnalytics = () => {
+      api.marketStatus().then(setStatus).catch(() => setStatus(null));
+      if (view === 'overview') {
+        api.marketAnalytics().then(setAnalytics).catch(() => {});
+      }
+    };
+    refreshStatusAndAnalytics();
+    const id = window.setInterval(refreshStatusAndAnalytics, 10_000);
+    return () => window.clearInterval(id);
+  }, [view]);
 
-  // Load REST snapshot whenever watchlist changes
+  // Load REST snapshot immediately and refresh every 10s
   useEffect(() => {
     let active = true;
-    api
-      .quotes(watchlist)
-      .then((res) => {
-        if (!active) return;
-        setQuotesById((prev) => {
-          const next = { ...prev };
-          for (const q of res.quotes) next[q.instrumentId] = q;
-          return next;
-        });
-      })
-      .catch(() => {});
+    const fetchWatchlistQuotes = () => {
+      api
+        .quotes(watchlist)
+        .then((res) => {
+          if (!active) return;
+          setQuotesById((prev) => {
+            const next = { ...prev };
+            for (const q of res.quotes) next[q.instrumentId] = q;
+            return next;
+          });
+        })
+        .catch(() => {});
+    };
+    fetchWatchlistQuotes();
+    const pollId = window.setInterval(fetchWatchlistQuotes, 10_000);
     return () => {
       active = false;
+      window.clearInterval(pollId);
     };
   }, [watchlist]);
 
   // Multiplexed WebSocket fan-out (/ws/market)
   useEffect(() => {
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${window.location.host}/ws/market`);
+    const ws = new WebSocket(getMarketWsUrl());
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -311,7 +323,9 @@ export function MarketPage({ view, onTradeClick, onChartClick, onOptionChainClic
               {analytics.gainers.map((g) => (
                 <div key={g.symbol} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, padding: '4px 0', borderBottom: '1px solid var(--border-subtle)' }}>
                   <strong>{g.symbol}</strong>
-                  <span className="mono" style={{ color: 'var(--gain)' }}>{formatINR(g.ltp)} (+{g.changePercent}%)</span>
+                  <span className="mono" style={{ color: g.changePercent >= 0 ? 'var(--gain)' : 'var(--loss)' }}>
+                    {formatINR(g.ltp)} ({g.changePercent >= 0 ? '+' : ''}{g.changePercent}%)
+                  </span>
                 </div>
               ))}
             </section>
@@ -320,7 +334,9 @@ export function MarketPage({ view, onTradeClick, onChartClick, onOptionChainClic
               {analytics.losers.map((l) => (
                 <div key={l.symbol} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, padding: '4px 0', borderBottom: '1px solid var(--border-subtle)' }}>
                   <strong>{l.symbol}</strong>
-                  <span className="mono" style={{ color: 'var(--loss)' }}>{formatINR(l.ltp)} ({l.changePercent}%)</span>
+                  <span className="mono" style={{ color: l.changePercent >= 0 ? 'var(--gain)' : 'var(--loss)' }}>
+                    {formatINR(l.ltp)} ({l.changePercent >= 0 ? '+' : ''}{l.changePercent}%)
+                  </span>
                 </div>
               ))}
             </section>

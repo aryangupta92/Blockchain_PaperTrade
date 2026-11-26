@@ -105,10 +105,64 @@ export async function registerUser(input: {
         },
         watchlists: {
           create: [
-            { name: 'Equities', segment: 'EQ', symbolsJson: JSON.stringify(['RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK']) },
-            { name: 'Indices & F&O', segment: 'FNO', symbolsJson: JSON.stringify(['NIFTY', 'BANKNIFTY', 'SENSEX']) },
-            { name: 'ETFs', segment: 'ETF', symbolsJson: JSON.stringify(['NIFTYBEES', 'GOLDBEES', 'SILVERBEES']) },
-            { name: 'Commodities', segment: 'COMM', symbolsJson: JSON.stringify(['GOLD', 'SILVER', 'CRUDEOIL']) },
+            {
+              name: 'Equities',
+              segment: 'EQ',
+              sortOrder: 0,
+              symbolsJson: JSON.stringify(['RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK']),
+              items: {
+                create: ['RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK'].map((s, idx) => ({
+                  symbol: s,
+                  sectionName: 'Large Cap Core',
+                  exchange: 'NSE',
+                  segment: 'EQ',
+                  sortOrder: idx,
+                })),
+              },
+            },
+            {
+              name: 'Indices & F&O',
+              segment: 'FNO',
+              sortOrder: 1,
+              symbolsJson: JSON.stringify(['NIFTY', 'BANKNIFTY', 'SENSEX']),
+              items: {
+                create: [
+                  { symbol: 'NIFTY', sectionName: 'Indices', exchange: 'NSE', segment: 'FNO', sortOrder: 0 },
+                  { symbol: 'BANKNIFTY', sectionName: 'Indices', exchange: 'NSE', segment: 'FNO', sortOrder: 1 },
+                  { symbol: 'SENSEX', sectionName: 'Indices', exchange: 'BSE', segment: 'FNO', sortOrder: 2 },
+                ],
+              },
+            },
+            {
+              name: 'ETFs',
+              segment: 'ETF',
+              sortOrder: 2,
+              symbolsJson: JSON.stringify(['NIFTYBEES', 'GOLDBEES', 'SILVERBEES']),
+              items: {
+                create: ['NIFTYBEES', 'GOLDBEES', 'SILVERBEES'].map((s, idx) => ({
+                  symbol: s,
+                  sectionName: 'ETFs',
+                  exchange: 'NSE',
+                  segment: 'ETF',
+                  sortOrder: idx,
+                })),
+              },
+            },
+            {
+              name: 'Commodities',
+              segment: 'COMM',
+              sortOrder: 3,
+              symbolsJson: JSON.stringify(['GOLD', 'SILVER', 'CRUDEOIL']),
+              items: {
+                create: ['GOLD', 'SILVER', 'CRUDEOIL'].map((s, idx) => ({
+                  symbol: s,
+                  sectionName: 'Commodities',
+                  exchange: 'MCX',
+                  segment: 'COMM',
+                  sortOrder: idx,
+                })),
+              },
+            },
           ],
         },
       },

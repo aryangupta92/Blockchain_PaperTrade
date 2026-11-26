@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BarChart2, Layers, X } from 'lucide-react';
-import { api, formatINR } from '../apiClient';
+import { api, formatINR, getMarketWsUrl } from '../apiClient';
 
 interface DepthLevel {
   price: string;
@@ -28,8 +28,7 @@ export function MarketDepthModal({ symbol, segment, onClose, onSelectPrice }: Ma
   }, [symbol]);
 
   useEffect(() => {
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${window.location.host}/ws/market`);
+    const ws = new WebSocket(getMarketWsUrl());
     ws.onopen = () => {
       setWsLive(true);
       ws.send(JSON.stringify({ action: 'subscribe', symbols: [symbol] }));

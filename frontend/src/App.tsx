@@ -32,6 +32,7 @@ import {
   AccountMode,
   api,
   formatINR,
+  getMarketWsUrl,
   setAccessToken,
   TradingAccountDTO,
   UserProfile,
@@ -264,17 +265,20 @@ export function App() {
       .finally(() => setBootstrapping(false));
   }, []);
 
-  // Pinned Index Ticker Strip (REST snapshot + live WS)
+  // Pinned Index Ticker Strip (REST snapshot + 10s periodic poll + live WS)
   useEffect(() => {
     if (!user) return;
-    api.quotes(PINNED_INDICES).then((res) => {
-      const next: Record<string, { ltp: string | null; changePercent: string | null }> = {};
-      for (const q of res.quotes) next[q.symbol.toUpperCase()] = { ltp: q.ltp, changePercent: q.changePercent };
-      setIndexQuotes(next);
-    }).catch(() => {});
+    const fetchIndices = () => {
+      api.quotes(PINNED_INDICES).then((res) => {
+        const next: Record<string, { ltp: string | null; changePercent: string | null }> = {};
+        for (const q of res.quotes) next[q.symbol.toUpperCase()] = { ltp: q.ltp, changePercent: q.changePercent };
+        setIndexQuotes(next);
+      }).catch(() => {});
+    };
+    fetchIndices();
+    const pollId = window.setInterval(fetchIndices, 10_000);
 
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${window.location.host}/ws/market`);
+    const ws = new WebSocket(getMarketWsUrl());
     ws.onopen = () => ws.send(JSON.stringify({ action: 'subscribe', symbols: PINNED_INDICES }));
     ws.onmessage = (evt) => {
       try {
@@ -287,7 +291,10 @@ export function App() {
         }
       } catch { /* ignore */ }
     };
-    return () => ws.close();
+    return () => {
+      window.clearInterval(pollId);
+      ws.close();
+    };
   }, [user]);
 
   // Debounced global smart search

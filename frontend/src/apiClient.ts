@@ -104,6 +104,36 @@ export function formatINR(value: string | number): string {
   return `${neg ? '-' : ''}₹${formattedInt}.${decPart}`;
 }
 
+const RAW_API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/+$/, '');
+
+export const API_V1_BASE = RAW_API_BASE
+  ? RAW_API_BASE.endsWith('/api/v1')
+    ? RAW_API_BASE
+    : `${RAW_API_BASE}/api/v1`
+  : '/api/v1';
+
+/**
+ * Resolves the multiplexed market-data WebSocket endpoint from VITE_WS_URL,
+ * VITE_API_BASE_URL, or the active window origin in local dev.
+ */
+export function getMarketWsUrl(): string {
+  const explicitWs = (import.meta.env.VITE_WS_URL ?? '').trim().replace(/\/+$/, '');
+  if (explicitWs) {
+    return explicitWs.endsWith('/ws/market') ? explicitWs : `${explicitWs}/ws/market`;
+  }
+  if (RAW_API_BASE) {
+    try {
+      const parsed = new URL(RAW_API_BASE);
+      const wsProto = parsed.protocol === 'https:' ? 'wss:' : 'ws:';
+      return `${wsProto}//${parsed.host}/ws/market`;
+    } catch {
+      // Fall through to current host
+    }
+  }
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${proto}//${window.location.host}/ws/market`;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -112,16 +142,21 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (accessToken) {
     headers.Authorization = `Bearer ${accessToken}`;
   }
-  const res = await fetch(`/api/v1${path}`, {
+  const res = await fetch(`${API_V1_BASE}${path}`, {
     ...init,
     headers,
     credentials: 'include',
   });
-  const data = await res.json().catch(() => ({}));
+  const contentType = res.headers.get('content-type') || '';
+  const isJson = contentType.includes('application/json');
+  const data = isJson ? await res.json().catch(() => ({})) : {};
   if (!res.ok) {
     const err = new Error(data.error || `Request failed (${res.status})`) as Error & { code?: string };
     err.code = data.code;
     throw err;
+  }
+  if (!isJson) {
+    throw new Error('Backend API is not configured or unreachable. Set VITE_API_BASE_URL in Vercel Environment Variables.');
   }
   return data as T;
 }
@@ -826,7 +861,7 @@ export const api = {
     }>(`/reports/${mode}/tax-pnl`),
 
   downloadCsvReport: async (mode: AccountMode, type: 'trades' | 'ledger' | 'tax-pnl') => {
-    const res = await fetch(`/api/v1/reports/${mode}/export?type=${type}`, {
+    const res = await fetch(`${API_V1_BASE}/reports/${mode}/export?type=${type}`, {
       headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
       credentials: 'include',
     });

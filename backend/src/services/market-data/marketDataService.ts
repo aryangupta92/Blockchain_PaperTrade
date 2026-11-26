@@ -9,8 +9,9 @@ import {
 } from '@broker/shared';
 import { marketCache } from './marketDataCache';
 import { getMarketSession } from './marketSessionClock';
-import { getTokenStatus, refreshViaTotp, requireSessionToken } from './providerTokenManager';
+import { getActiveSessionToken, getTokenStatus, refreshViaTotp, requireSessionToken } from './providerTokenManager';
 import {
+  getCoreIndices,
   getMasterIndex,
   MasterInstrument,
   refreshInstrumentMaster,
@@ -59,6 +60,11 @@ export interface NormalizedOptionChain {
 function numOrNull(v: unknown): number | null {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+function positiveNumOrNull(v: unknown): number | null {
+  const n = numOrNull(v);
+  return n != null && n > 0 ? n : null;
 }
 
 function parseOptionLeg(raw: Record<string, unknown> | undefined): NormalizedOptionLeg {
@@ -207,6 +213,19 @@ class PrimaryMarketDataService implements MarketDataProvider {
 
   public async getHealth() {
     const tokenSt = getTokenStatus();
+    if (tokenSt.authenticated && process.env.NODE_ENV !== 'test') {
+      const session = getActiveSessionToken();
+      if (session?.token) {
+        liveFeed.resetReconnectIfTokenChanged(session.token);
+      }
+      if (!liveFeed.status().connected) {
+        if (liveFeed.status().subscribedCount === 0) {
+          liveFeed.subscribe(getCoreIndices(), 'full').catch(() => {});
+        } else {
+          liveFeed.ensureConnected().catch(() => {});
+        }
+      }
+    }
     const feedSt = liveFeed.status();
     const master = await getMasterIndex();
 
@@ -324,14 +343,14 @@ class PrimaryMarketDataService implements MarketDataProvider {
             change: change != null ? change.toFixed(2) : null,
             changePercent: changePct != null ? changePct.toFixed(2) : null,
             volume: numOrNull(rawObj.volume),
-            vwap: numOrNull(rawObj.average_price)?.toFixed(2) ?? null,
+            vwap: positiveNumOrNull(rawObj.average_price)?.toFixed(2) ?? null,
             openInterest: numOrNull(rawObj.oi),
             bidDepth: mapLevels(depthObj.buy),
             askDepth: mapLevels(depthObj.sell),
-            upperCircuit: numOrNull(rawObj.upper_circuit_limit)?.toFixed(2) ?? inst.upperCircuit ?? null,
-            lowerCircuit: numOrNull(rawObj.lower_circuit_limit)?.toFixed(2) ?? inst.lowerCircuit ?? null,
-            week52High: numOrNull(rawObj['52_week_high'])?.toFixed(2) ?? null,
-            week52Low: numOrNull(rawObj['52_week_low'])?.toFixed(2) ?? null,
+            upperCircuit: positiveNumOrNull(rawObj.upper_circuit_limit)?.toFixed(2) ?? inst.upperCircuit ?? null,
+            lowerCircuit: positiveNumOrNull(rawObj.lower_circuit_limit)?.toFixed(2) ?? inst.lowerCircuit ?? null,
+            week52High: positiveNumOrNull(rawObj['52_week_high'])?.toFixed(2) ?? null,
+            week52Low: positiveNumOrNull(rawObj['52_week_low'])?.toFixed(2) ?? null,
             totalBuyQty: numOrNull(rawObj.buy_quantity),
             totalSellQty: numOrNull(rawObj.sell_quantity),
             ltq: numOrNull(rawObj.last_quantity),

@@ -31,7 +31,7 @@ const SCAN_UNIVERSE: Array<{ symbol: string; sector: string; mcapWeight: number 
   { symbol: 'NESTLEIND', sector: 'FMCG', mcapWeight: 1.9 },
   { symbol: 'MARUTI', sector: 'Auto', mcapWeight: 3.3 },
   { symbol: 'M&M', sector: 'Auto', mcapWeight: 3.1 },
-  { symbol: 'TATAMOTORS', sector: 'Auto', mcapWeight: 2.9 },
+  { symbol: 'TMPV', sector: 'Auto', mcapWeight: 2.9 },
   { symbol: 'SUNPHARMA', sector: 'Pharma', mcapWeight: 3.6 },
   { symbol: 'DRREDDY', sector: 'Pharma', mcapWeight: 1.5 },
   { symbol: 'CIPLA', sector: 'Pharma', mcapWeight: 1.4 },

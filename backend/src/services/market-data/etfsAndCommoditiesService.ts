@@ -9,7 +9,7 @@ const SECTOR_BASKETS: Record<string, string[]> = {
   Banking: ['HDFCBANK', 'ICICIBANK', 'SBIN', 'AXISBANK', 'KOTAKBANK'],
   IT: ['TCS', 'INFY', 'WIPRO', 'HCLTECH', 'TECHM'],
   Energy: ['RELIANCE', 'ONGC', 'NTPC', 'POWERGRID', 'COALINDIA'],
-  Auto: ['MARUTI', 'M&M', 'TATAMOTORS', 'BAJAJ-AUTO', 'EICHERMOT'],
+  Auto: ['MARUTI', 'M&M', 'TMPV', 'BAJAJ-AUTO', 'EICHERMOT'],
   FMCG: ['HINDUNILVR', 'ITC', 'NESTLEIND', 'BRITANNIA', 'TATACONSUM'],
   Pharma: ['SUNPHARMA', 'DRREDDY', 'CIPLA', 'DIVISLAB', 'APOLLOHOSP'],
   InfraMetals: ['LT', 'JSWSTEEL', 'TATASTEEL', 'HINDALCO', 'ULTRACEMCO'],
@@ -81,7 +81,7 @@ export async function getEtfCatalog(category?: string, includeQuotes = true) {
   const top = filtered.slice(0, 40);
   const quotes =
     includeQuotes && top.length > 0
-      ? await marketDataService.getQuotes(top.slice(0, 25).map((e) => e.instrumentId)).catch(() => [])
+      ? await marketDataService.getQuotes(top.map((e) => e.instrumentId)).catch(() => [])
       : [];
   const qMap = new Map(quotes.map((q) => [q.instrumentId, q]));
 
@@ -146,6 +146,9 @@ export async function getCommodityContracts(params: {
     .filter((c) => (!groupFilter ? true : c.group === groupFilter))
     .filter((c) => (!kindFilter ? true : c.instrumentKind === kindFilter))
     .sort((a, b) => {
+      const aKnown = a.group !== 'OTHER';
+      const bKnown = b.group !== 'OTHER';
+      if (aKnown !== bKnown) return aKnown ? -1 : 1;
       // Near-month futures first
       if (a.instrumentKind !== b.instrumentKind) return a.instrumentKind === 'FUTURES' ? -1 : 1;
       const expA = a.expiryDate || '9999-12-31';
@@ -158,7 +161,7 @@ export async function getCommodityContracts(params: {
   const top = filtered.slice(0, 40);
   const quotes =
     params.includeQuotes !== false && top.length > 0
-      ? await marketDataService.getQuotes(top.slice(0, 20).map((c) => c.instrumentId)).catch(() => [])
+      ? await marketDataService.getQuotes(top.map((c) => c.instrumentId)).catch(() => [])
       : [];
   const qMap = new Map(quotes.map((q) => [q.instrumentId, q]));
 
@@ -208,13 +211,21 @@ export async function getMarketAnalytics() {
       freshness: q.freshness,
     }));
 
-  const gainers = [...withChange]
+  const posGainers = withChange
+    .filter((q) => q.changePercent > 0)
     .sort((a, b) => b.changePercent - a.changePercent)
     .slice(0, 6);
+  const gainers = posGainers.length > 0
+    ? posGainers
+    : [...withChange].sort((a, b) => b.changePercent - a.changePercent).slice(0, 6);
 
-  const losers = [...withChange]
+  const negLosers = withChange
+    .filter((q) => q.changePercent < 0)
     .sort((a, b) => a.changePercent - b.changePercent)
     .slice(0, 6);
+  const losers = negLosers.length > 0
+    ? negLosers
+    : [...withChange].sort((a, b) => a.changePercent - b.changePercent).slice(0, 6);
 
   const mostActive = [...withChange]
     .sort((a, b) => b.volume - a.volume)

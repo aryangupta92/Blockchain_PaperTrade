@@ -190,6 +190,7 @@ class LiveMarketFeedManager {
   private ws: WebSocket | null = null;
   private depthWs: WebSocket | null = null;
   private connecting: Promise<void> | null = null;
+  private activeToken: string | null = null;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private lastTickAt: number | null = null;
@@ -236,13 +237,33 @@ class LiveMarketFeedManager {
     };
   }
 
+  public resetReconnectIfTokenChanged(token: string): void {
+    if (!token || this.activeToken === token) return;
+    this.reconnectAttempts = 0;
+    if (this.ws) {
+      const stale = this.ws;
+      this.ws = null;
+      try { stale.close(); } catch { /* ignore */ }
+    }
+    if (this.subscribedInstruments.size > 0) {
+      this.ensureConnected().catch(() => {});
+    }
+  }
+
   public async ensureConnected(): Promise<void> {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
+    const session = requireSessionToken();
+    if (this.ws && this.ws.readyState === WebSocket.OPEN && this.activeToken === session.token) return;
+    if (this.ws && this.activeToken && this.activeToken !== session.token) {
+      const stale = this.ws;
+      this.ws = null;
+      this.reconnectAttempts = 0;
+      try { stale.close(); } catch { /* ignore */ }
+    }
     if (this.connecting) return this.connecting;
 
     this.connecting = (async () => {
-      const session = requireSessionToken();
-      const url = `${UPSTREAM_FEED_WS}?version=2&token=${encodeURIComponent(session.token)}&clientId=${encodeURIComponent(session.clientId)}&authType=2`;
+      const freshSession = requireSessionToken();
+      const url = `${UPSTREAM_FEED_WS}?version=2&token=${encodeURIComponent(freshSession.token)}&clientId=${encodeURIComponent(freshSession.clientId)}&authType=2`;
 
       await new Promise<void>((resolve, reject) => {
         const sock = new WebSocket(url);
@@ -254,6 +275,7 @@ class LiveMarketFeedManager {
         sock.on('open', () => {
           clearTimeout(timer);
           this.ws = sock;
+          this.activeToken = freshSession.token;
           this.reconnectAttempts = 0;
 
           const hb = setInterval(() => {
@@ -291,9 +313,17 @@ class LiveMarketFeedManager {
   }
 
   private scheduleReconnect() {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts || this.subscribedInstruments.size === 0) return;
-    this.reconnectAttempts++;
-    const delayMs = Math.min(60_000, 3_000 * Math.pow(2, this.reconnectAttempts - 1));
+    if (this.subscribedInstruments.size === 0) return;
+    let hasSession = false;
+    try {
+      requireSessionToken();
+      hasSession = true;
+    } catch {
+      hasSession = false;
+    }
+    if (!hasSession && this.reconnectAttempts >= this.maxReconnectAttempts) return;
+    this.reconnectAttempts = Math.min(this.reconnectAttempts + 1, 8);
+    const delayMs = Math.min(30_000, 3_000 * Math.pow(2, this.reconnectAttempts - 1));
     setTimeout(() => {
       this.ensureConnected().catch(() => {});
     }, delayMs).unref?.();

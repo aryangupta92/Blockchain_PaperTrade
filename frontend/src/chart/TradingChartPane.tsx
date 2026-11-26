@@ -11,7 +11,7 @@ import {
   UTCTimestamp,
 } from 'lightweight-charts';
 import { BarChart2, FastForward, Pause, Play, RotateCcw, Search, X } from 'lucide-react';
-import { AccountMode, api, formatINR } from '../apiClient';
+import { AccountMode, api, formatINR, getMarketWsUrl } from '../apiClient';
 import {
   Bar,
   calcADX,
@@ -96,14 +96,14 @@ export interface ChartPaneProps {
 }
 
 function dateRangeForInterval(interval: string): { from: string; to: string } {
-  const now = new Date();
-  const to = now.toISOString().slice(0, 10);
+  const istNow = new Date(Date.now() + 5.5 * 3600 * 1000);
+  const to = new Date(istNow.getTime() + 86400 * 1000).toISOString().slice(0, 10);
   const days =
     interval === '1W' ? 730 :
       interval === '1D' ? 365 :
         interval === '1h' ? 60 :
-          interval === '30m' || interval === '15m' ? 30 : 12;
-  const from = new Date(now.getTime() - days * 86400 * 1000).toISOString().slice(0, 10);
+          interval === '30m' || interval === '15m' ? 30 : 14;
+  const from = new Date(istNow.getTime() - days * 86400 * 1000).toISOString().slice(0, 10);
   return { from, to };
 }
 
@@ -151,6 +151,8 @@ export function TradingChartPane({
   const [pendingPoint, setPendingPoint] = useState<{ time: number; price: number } | null>(null);
   const [tradeToast, setTradeToast] = useState<string | null>(null);
   const [, setRenderTick] = useState(0);
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const [retryCount, setRetryCount] = useState(0);
 
   // Bar Replay State
   const [replayIdx, setReplayIdx] = useState<number | null>(null);
@@ -189,6 +191,10 @@ export function TradingChartPane({
     return () => window.clearInterval(t);
   }, [replayPlaying, replayIdx, bars.length]);
 
+  useEffect(() => {
+    setRetryCount(0);
+  }, [symbol, interval]);
+
   // 1. Fetch historical candles
   useEffect(() => {
     let active = true;
@@ -202,7 +208,11 @@ export function TradingChartPane({
       .candles({ symbol, interval, from, to })
       .then((res) => {
         if (!active) return;
-        const sorted = [...res.candles].sort((a, b) => a.time - b.time);
+        const byTime = new Map<number, Bar>();
+        for (const bar of res.candles) {
+          if (bar && Number.isFinite(bar.time)) byTime.set(bar.time, bar);
+        }
+        const sorted = [...byTime.values()].sort((a, b) => a.time - b.time);
         setBars(sorted);
         if (sorted.length > 0) setLiveLtp(sorted[sorted.length - 1].close.toFixed(2));
       })
@@ -216,7 +226,16 @@ export function TradingChartPane({
       });
 
     return () => { active = false; };
-  }, [symbol, interval]);
+  }, [symbol, interval, reloadNonce]);
+
+  useEffect(() => {
+    if (loading || bars.length > 0 || retryCount >= 3) return;
+    const t = window.setTimeout(() => {
+      setRetryCount((c) => c + 1);
+      setReloadNonce((n) => n + 1);
+    }, 4_000);
+    return () => window.clearTimeout(t);
+  }, [loading, bars.length, retryCount]);
 
   // 2. Fetch comparison symbol candles
   useEffect(() => {
@@ -268,8 +287,7 @@ export function TradingChartPane({
   // 4. Real-time WebSocket tick streaming updating right-most bar live
   useEffect(() => {
     if (replayIdx != null) return;
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${window.location.host}/ws/market`);
+    const ws = new WebSocket(getMarketWsUrl());
     ws.onopen = () => ws.send(JSON.stringify({ action: 'subscribe', symbols: [symbol] }));
     ws.onmessage = (evt) => {
       try {
@@ -346,7 +364,7 @@ export function TradingChartPane({
 
     const isDark = theme === 'dark';
     const chart = createChart(container, {
-      width: container.clientWidth,
+      width: Math.max(300, container.clientWidth),
       height,
       layout: {
         background: { type: ColorType.Solid, color: isDark ? '#0d1117' : '#ffffff' },
@@ -977,6 +995,19 @@ export function TradingChartPane({
         </div>
 
         <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="preset-btn"
+            style={{ fontSize: 11, padding: '3px 7px' }}
+            title="Reload candles"
+            onClick={(e) => {
+              e.stopPropagation();
+              setRetryCount(0);
+              setReloadNonce((n) => n + 1);
+            }}
+          >
+            <RotateCcw size={11} /> Reload
+          </button>
           {/* Bar Replay Controls */}
           {bars.length > 25 && (
             <div style={{ display: 'inline-flex', gap: 3, alignItems: 'center', marginRight: 4 }}>
@@ -1072,6 +1103,39 @@ export function TradingChartPane({
       {/* Main Chart Canvas + Drag Handles + SVG Drawing Overlay */}
       <div style={{ position: 'relative', width: '100%', height }} onContextMenu={handleContextMenu}>
         <div ref={mainContainerRef} style={{ width: '100%', height: '100%' }} />
+
+        {bars.length === 0 && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexDirection: 'column',
+              gap: 8,
+              pointerEvents: 'none',
+              color: 'var(--text-muted)',
+              fontSize: 12.5,
+            }}
+          >
+            <span>{loading ? `Loading ${symbol} (${interval}) candles...` : `No historical candles loaded yet for ${symbol}`}</span>
+            {!loading && (
+              <button
+                type="button"
+                className="preset-btn"
+                style={{ pointerEvents: 'auto', fontSize: 11.5 }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setRetryCount(0);
+                  setReloadNonce((n) => n + 1);
+                }}
+              >
+                <RotateCcw size={12} /> Reload Candles
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Interactive Drag-to-Modify Pills projected directly onto order price Y coordinates */}
         {restingOrders.map((o) => {

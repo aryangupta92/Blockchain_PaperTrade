@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BarChart3, ChevronDown, ChevronRight, Layers, LineChart, Plus, Search, Trash2 } from 'lucide-react';
-import { api } from '../apiClient';
+import { api, getMarketWsUrl } from '../apiClient';
 
 const COLOR_MAP: Record<string, string> = {
   RED: '#ef4444',
@@ -67,24 +67,27 @@ export function WatchlistDrawer({
   const currentWl = watchlists[activeIdx] || watchlists[0] || null;
   const symbols = useMemo(() => (currentWl?.items || []).map((i) => i.symbol), [currentWl]);
 
-  // Initial REST snapshot + live WS streaming for active watchlist
+  // Initial REST snapshot + periodic 10s REST refresh + live WS streaming for active watchlist
   useEffect(() => {
     if (symbols.length === 0) return;
     let alive = true;
-    api.quotes(symbols).then((res) => {
-      if (!alive) return;
-      setQuotes((prev) => {
-        const next = { ...prev };
-        for (const q of res.quotes) {
-          next[q.symbol.toUpperCase()] = q;
-          if (q.ltp) prevLtpRef.current[q.symbol.toUpperCase()] = Number(q.ltp);
-        }
-        return next;
-      });
-    }).catch(() => {});
+    const fetchSnapshot = () => {
+      api.quotes(symbols).then((res) => {
+        if (!alive) return;
+        setQuotes((prev) => {
+          const next = { ...prev };
+          for (const q of res.quotes) {
+            next[q.symbol.toUpperCase()] = q;
+            if (q.ltp) prevLtpRef.current[q.symbol.toUpperCase()] = Number(q.ltp);
+          }
+          return next;
+        });
+      }).catch(() => {});
+    };
+    fetchSnapshot();
+    const pollId = window.setInterval(fetchSnapshot, 10_000);
 
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${window.location.host}/ws/market`);
+    const ws = new WebSocket(getMarketWsUrl());
     ws.onopen = () => {
       ws.send(JSON.stringify({ action: 'subscribe', symbols }));
     };
@@ -109,6 +112,7 @@ export function WatchlistDrawer({
     };
     return () => {
       alive = false;
+      window.clearInterval(pollId);
       ws.close();
     };
   }, [symbols.join(',')]);

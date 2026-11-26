@@ -52,23 +52,52 @@ const DEFAULT_STARTER_ITEMS = [
 
 async function ensureDefaultWatchlists(userId: string) {
   const prisma = getPrisma();
-  const count = await prisma.watchlist.count({ where: { userId } });
-  if (count > 0) return;
-
-  await prisma.watchlist.create({
-    data: {
-      userId,
-      name: 'Watchlist 1',
-      segment: 'ALL',
-      sortOrder: 0,
-      items: {
-        create: DEFAULT_STARTER_ITEMS.map((item, idx) => ({
-          ...item,
-          sortOrder: idx,
-        })),
-      },
-    },
+  const existing = await prisma.watchlist.findMany({
+    where: { userId },
+    include: { items: true },
   });
+
+  if (existing.length === 0) {
+    await prisma.watchlist.create({
+      data: {
+        userId,
+        name: 'Watchlist 1',
+        segment: 'ALL',
+        sortOrder: 0,
+        items: {
+          create: DEFAULT_STARTER_ITEMS.map((item, idx) => ({
+            ...item,
+            sortOrder: idx,
+          })),
+        },
+      },
+    });
+    return;
+  }
+
+  for (const wl of existing) {
+    if (wl.items.length > 0) continue;
+    let symbols: string[] = [];
+    try {
+      const parsed = JSON.parse(wl.symbolsJson || '[]');
+      if (Array.isArray(parsed)) symbols = parsed.map((s) => String(s).trim()).filter(Boolean);
+    } catch { /* ignore */ }
+    if (symbols.length === 0) continue;
+    const seg = wl.segment === 'ALL' ? 'EQ' : wl.segment;
+    for (let idx = 0; idx < symbols.length; idx++) {
+      const sym = symbols[idx].toUpperCase();
+      await prisma.watchlistItem.create({
+        data: {
+          watchlistId: wl.id,
+          symbol: sym,
+          sectionName: wl.name || 'General',
+          exchange: seg === 'COMM' ? 'MCX' : sym === 'SENSEX' || sym === 'BANKEX' ? 'BSE' : 'NSE',
+          segment: seg,
+          sortOrder: idx,
+        },
+      }).catch(() => {});
+    }
+  }
 }
 
 export async function watchlistRoutes(app: FastifyInstance) {

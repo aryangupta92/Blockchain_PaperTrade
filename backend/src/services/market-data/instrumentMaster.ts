@@ -125,6 +125,7 @@ function isEtfSymbol(tradingSymbol: string, displayName: string): boolean {
 function preferenceRank(rec: MasterInstrument): number {
   let score = 0;
   if (rec.instrumentKind === 'INDEX') score += 100;
+  if (rec.instrumentId.includes(':IDX:')) score += 10;
   if (rec.exchange === 'NSE') score += 30;
   else if (rec.exchange === 'MCX') score += 20;
   else if (rec.exchange === 'BSE') score += 10;

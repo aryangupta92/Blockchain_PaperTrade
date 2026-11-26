@@ -36,24 +36,46 @@ const EnableTotpBody = z.object({
   code: z.string().regex(/^\d{6}$/, 'Enter a valid 6-digit authenticator code'),
 });
 
+function resolveCookiePolicy(): { sameSite: 'Lax' | 'None' | 'Strict'; secure: boolean } {
+  const env = getEnv();
+  const isProd = env.NODE_ENV === 'production';
+  const sameSite: 'Lax' | 'None' | 'Strict' =
+    env.COOKIE_SAME_SITE === 'none'
+      ? 'None'
+      : env.COOKIE_SAME_SITE === 'strict'
+        ? 'Strict'
+        : env.COOKIE_SAME_SITE === 'lax'
+          ? 'Lax'
+          : isProd
+            ? 'None'
+            : 'Lax';
+  return { sameSite, secure: isProd || sameSite === 'None' };
+}
+
 function setRefreshCookie(reply: FastifyReply, refreshToken: string) {
-  const isProd = getEnv().NODE_ENV === 'production';
+  const { sameSite, secure } = resolveCookiePolicy();
   const attrs = [
     `${REFRESH_COOKIE_NAME}=${encodeURIComponent(refreshToken)}`,
     'HttpOnly',
     'Path=/api/v1/auth',
-    'SameSite=Lax',
+    `SameSite=${sameSite}`,
     `Max-Age=${60 * 60 * 24 * 7}`,
   ];
-  if (isProd) attrs.push('Secure');
+  if (secure) attrs.push('Secure');
   reply.header('Set-Cookie', attrs.join('; '));
 }
 
 function clearRefreshCookie(reply: FastifyReply) {
-  reply.header(
-    'Set-Cookie',
-    `${REFRESH_COOKIE_NAME}=; HttpOnly; Path=/api/v1/auth; SameSite=Lax; Max-Age=0`
-  );
+  const { sameSite, secure } = resolveCookiePolicy();
+  const attrs = [
+    `${REFRESH_COOKIE_NAME}=`,
+    'HttpOnly',
+    'Path=/api/v1/auth',
+    `SameSite=${sameSite}`,
+    'Max-Age=0',
+  ];
+  if (secure) attrs.push('Secure');
+  reply.header('Set-Cookie', attrs.join('; '));
 }
 
 export async function authRoutes(app: FastifyInstance) {

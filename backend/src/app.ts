@@ -12,7 +12,7 @@ import {
   ProductType,
   OrderSide,
 } from '@broker/shared';
-import { getEnv } from './infrastructure/envConfig';
+import { getAllowedWebOrigins, getEnv } from './infrastructure/envConfig';
 import { sanitizeUserMessage } from './infrastructure/providerAnonymizer';
 import { blockchainService } from './services/blockchainAuditService';
 import { authRoutes } from './routes/auth';
@@ -56,12 +56,18 @@ export async function buildApp(): Promise<FastifyInstance> {
     bodyLimit: 1_048_576, // 1 MB strict payload cap
   });
 
+  const allowedOrigins = getAllowedWebOrigins(env);
+
   await app.register(helmet, {
     contentSecurityPolicy: false,
-    crossOriginResourcePolicy: { policy: 'same-origin' },
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
   });
   await app.register(cors, {
-    origin: env.WEB_ORIGIN,
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true);
+      const normalized = origin.replace(/\/+$/, '');
+      cb(null, allowedOrigins.includes(normalized));
+    },
     credentials: true,
   });
   await app.register(rateLimit, {
@@ -76,8 +82,8 @@ export async function buildApp(): Promise<FastifyInstance> {
       ['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method) &&
       req.headers.cookie
     ) {
-      const origin = req.headers.origin;
-      if (origin && origin !== env.WEB_ORIGIN) {
+      const origin = req.headers.origin?.replace(/\/+$/, '');
+      if (origin && !allowedOrigins.includes(origin)) {
         return reply.status(403).send({ error: 'Cross-site request origin rejected.', code: 'CSRF_ORIGIN_MISMATCH' });
       }
     }

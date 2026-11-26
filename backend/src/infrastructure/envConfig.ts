@@ -13,6 +13,7 @@ const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().min(1).max(65535).default(5100),
   WEB_ORIGIN: z.string().default('http://localhost:5174'),
+  COOKIE_SAME_SITE: z.enum(['lax', 'none', 'strict']).optional(),
   DATABASE_URL: z.string().min(1).default('file:./dev.db'),
   REDIS_URL: z.string().optional().default(''),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters').default('blocktrade_dev_jwt_secret_min_32_characters_long'),
@@ -65,4 +66,13 @@ export function getEnv(): AppEnv {
   }
   cachedEnv = parsed.data;
   return cachedEnv;
+}
+
+/**
+ * Parses comma-separated WEB_ORIGIN entries into normalized origin strings.
+ */
+export function getAllowedWebOrigins(env: AppEnv = getEnv()): string[] {
+  return env.WEB_ORIGIN.split(',')
+    .map((o) => o.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
 }
