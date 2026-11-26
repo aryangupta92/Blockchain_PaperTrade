@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, Layers, Radio, RefreshCw, Search } from 'lucide-react';
-import { api, formatINR, getMarketWsUrl } from '../apiClient';
+import { api, formatINR, getMarketWsUrl, mergeNormalizedQuote } from '../apiClient';
 import { InstrumentInspectorPanel } from './InstrumentInspectorPanel';
 
 interface QuoteItem {
@@ -121,7 +121,9 @@ export function MarketPage({ view, onTradeClick, onChartClick, onOptionChainClic
           if (!active) return;
           setQuotesById((prev) => {
             const next = { ...prev };
-            for (const q of res.quotes) next[q.instrumentId] = q;
+            for (const q of res.quotes) {
+              next[q.instrumentId] = mergeNormalizedQuote(prev[q.instrumentId], q);
+            }
             return next;
           });
         })
@@ -148,7 +150,10 @@ export function MarketPage({ view, onTradeClick, onChartClick, onOptionChainClic
       try {
         const msg = JSON.parse(evt.data) as { type: string; data: QuoteItem };
         if (msg.type === 'quote' && msg.data?.instrumentId) {
-          setQuotesById((prev) => ({ ...prev, [msg.data.instrumentId]: msg.data }));
+          setQuotesById((prev) => ({
+            ...prev,
+            [msg.data.instrumentId]: mergeNormalizedQuote(prev[msg.data.instrumentId], msg.data),
+          }));
         }
       } catch {
         // ignore malformed frames
@@ -374,6 +379,7 @@ export function MarketPage({ view, onTradeClick, onChartClick, onOptionChainClic
               <tbody>
                 {rows.map((q) => {
                   const chg = q.change ? Number(q.change) : 0;
+                  const chgPct = q.changePercent != null ? Number(q.changePercent) : 0;
                   const chgColor = chg > 0 ? 'var(--gain)' : chg < 0 ? 'var(--loss)' : 'var(--text-secondary)';
                   const isIndex = q.instrumentId.includes(':IDX:');
                   return (
@@ -391,7 +397,9 @@ export function MarketPage({ view, onTradeClick, onChartClick, onOptionChainClic
                         {q.ltp ? formatINR(q.ltp) : 'NO DATA'}
                       </td>
                       <td className="mono" style={{ textAlign: 'right', color: chgColor }}>
-                        {q.change && q.changePercent ? `${chg >= 0 ? '+' : ''}${q.change} (${q.changePercent}%)` : '—'}
+                        {q.change != null && q.changePercent != null
+                          ? `${chg >= 0 ? '+' : ''}${q.change} (${chgPct >= 0 ? '+' : ''}${q.changePercent}%)`
+                          : '—'}
                       </td>
                       <td className="mono" style={{ textAlign: 'right', fontSize: 11.5, color: 'var(--text-secondary)' }}>
                         {q.low && q.high ? `${q.low} – ${q.high}` : '—'}

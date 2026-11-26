@@ -2,9 +2,19 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
   "installCommand": "npm install",
-  "buildCommand": "npm --workspace=@broker/web run build",
+  "buildCommand": "npm run build:vercel",
   "outputDirectory": "frontend/dist",
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 30,
+      "includeFiles": "{backend/dist/**,shared-engine/dist/**,backend/prisma/**,node_modules/.prisma/**,node_modules/@prisma/client/**}"
+    }
+  },
   "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "/api/index.js?__path=:path*"
+    },
     {
       "source": "/((?!api/|ws/).*)",
       "destination": "/index.html"

@@ -49,6 +49,17 @@ const ChargeEstimateBody = z.object({
   asOfDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
+function isSameHostOrigin(origin: string, hostHeader?: string): boolean {
+  if (!hostHeader) return false;
+  const expectedHost = hostHeader.split(',')[0].trim().toLowerCase();
+  if (!expectedHost) return false;
+  try {
+    return new URL(origin).host.toLowerCase() === expectedHost;
+  } catch {
+    return false;
+  }
+}
+
 export async function buildApp(): Promise<FastifyInstance> {
   const env = getEnv();
   const app = Fastify({
@@ -83,7 +94,9 @@ export async function buildApp(): Promise<FastifyInstance> {
       req.headers.cookie
     ) {
       const origin = req.headers.origin?.replace(/\/+$/, '');
-      if (origin && !allowedOrigins.includes(origin)) {
+      const requestHost =
+        (req.headers['x-forwarded-host'] as string | undefined) || req.headers.host;
+      if (origin && !allowedOrigins.includes(origin) && !isSameHostOrigin(origin, requestHost)) {
         return reply.status(403).send({ error: 'Cross-site request origin rejected.', code: 'CSRF_ORIGIN_MISMATCH' });
       }
     }
@@ -132,7 +145,11 @@ export async function buildApp(): Promise<FastifyInstance> {
       service: 'blocktrade-api',
       version: '1.1.0',
       phase: 8,
-      database: env.DATABASE_URL.startsWith('postgresql') ? 'postgresql' : 'sqlite-dev',
+      database: env.DATABASE_URL.startsWith('postgres')
+        ? 'postgresql'
+        : process.env.VERCEL
+          ? 'sqlite-ephemeral'
+          : 'sqlite-dev',
       cache: env.REDIS_URL ? 'redis' : 'in-memory',
       marketData: {
         source: 'Primary Market Data Adapter',

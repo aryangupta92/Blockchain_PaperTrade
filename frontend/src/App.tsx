@@ -33,6 +33,7 @@ import {
   api,
   formatINR,
   getMarketWsUrl,
+  mergeNormalizedQuote,
   setAccessToken,
   TradingAccountDTO,
   UserProfile,
@@ -163,7 +164,9 @@ export function App() {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [globalQuery, setGlobalQuery] = useState('');
   const [globalHits, setGlobalHits] = useState<Array<{ symbol: string; tradingSymbol: string; exchange: string; segment: string }>>([]);
-  const [indexQuotes, setIndexQuotes] = useState<Record<string, { ltp: string | null; changePercent: string | null }>>({});
+  const [indexQuotes, setIndexQuotes] = useState<
+    Record<string, { ltp: string | null; prevClose?: string | null; change?: string | null; changePercent: string | null }>
+  >({});
 
   const navigateTo = useCallback(
     (
@@ -270,10 +273,26 @@ export function App() {
     if (!user) return;
     const fetchIndices = () => {
       api.quotes(PINNED_INDICES).then((res) => {
-        const next: Record<string, { ltp: string | null; changePercent: string | null }> = {};
-        for (const q of res.quotes) next[q.symbol.toUpperCase()] = { ltp: q.ltp, changePercent: q.changePercent };
-        setIndexQuotes(next);
-      }).catch(() => {});
+        setIndexQuotes((prev) => {
+          const next = { ...prev };
+          for (const q of res.quotes) {
+            const sym = q.symbol.toUpperCase();
+            const merged = mergeNormalizedQuote(prev[sym], {
+              ltp: q.ltp,
+              prevClose: q.prevClose,
+              change: q.change,
+              changePercent: q.changePercent,
+            });
+            next[sym] = {
+              ltp: merged.ltp ?? null,
+              prevClose: merged.prevClose ?? null,
+              change: merged.change ?? null,
+              changePercent: merged.changePercent ?? null,
+            };
+          }
+          return next;
+        });
+      }).catch(() => { });
     };
     fetchIndices();
     const pollId = window.setInterval(fetchIndices, 10_000);
@@ -286,7 +305,23 @@ export function App() {
         if (msg.type === 'quote' && msg.data?.symbol) {
           const sym = String(msg.data.symbol).toUpperCase();
           if (PINNED_INDICES.includes(sym)) {
-            setIndexQuotes((prev) => ({ ...prev, [sym]: { ltp: msg.data.ltp, changePercent: msg.data.changePercent } }));
+            setIndexQuotes((prev) => {
+              const merged = mergeNormalizedQuote(prev[sym], {
+                ltp: msg.data.ltp ?? null,
+                prevClose: msg.data.prevClose ?? null,
+                change: msg.data.change ?? null,
+                changePercent: msg.data.changePercent ?? null,
+              });
+              return {
+                ...prev,
+                [sym]: {
+                  ltp: merged.ltp ?? null,
+                  prevClose: merged.prevClose ?? null,
+                  change: merged.change ?? null,
+                  changePercent: merged.changePercent ?? null,
+                },
+              };
+            });
           }
         }
       } catch { /* ignore */ }
@@ -336,7 +371,7 @@ export function App() {
   };
 
   const handleLogout = async () => {
-    await api.logout().catch(() => {});
+    await api.logout().catch(() => { });
     setAccessToken(null);
     setUser(null);
     setAccounts([]);
@@ -431,13 +466,14 @@ export function App() {
           <div className="index-ticker-strip">
             {PINNED_INDICES.map((idx) => {
               const q = indexQuotes[idx];
-              const pct = q?.changePercent ? Number(q.changePercent) : 0;
+              const pct = q?.changePercent != null ? Number(q.changePercent) : 0;
+              const pctColor = pct > 0 ? 'var(--gain)' : pct < 0 ? 'var(--loss)' : 'var(--text-secondary)';
               return (
                 <div key={idx} className="index-pill" onClick={() => openChart(idx, 'FNO')} title={`Open ${idx} Chart`}>
                   <strong>{idx}</strong>
                   <span className="mono">{q?.ltp ? Number(q.ltp).toFixed(1) : '—'}</span>
-                  {q?.changePercent && (
-                    <span className="mono" style={{ color: pct >= 0 ? 'var(--gain)' : 'var(--loss)', fontSize: 10.5 }}>
+                  {q?.changePercent != null && (
+                    <span className="mono" style={{ color: pctColor, fontSize: 10.5 }}>
                       {pct >= 0 ? '+' : ''}{q.changePercent}%
                     </span>
                   )}

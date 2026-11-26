@@ -124,6 +124,28 @@ function loadStoredDrawings(): Record<string, ChartDrawing[]> {
   }
 }
 
+const EMPTY_DRAWINGS: ChartDrawing[] = [];
+
+function IstClockBadge() {
+  const [istClock, setIstClock] = useState('');
+  useEffect(() => {
+    const tick = () => {
+      const str = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Kolkata',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      }).format(new Date());
+      setIstClock(`${str} UTC+5:30`);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+  return <span className="mono" style={{ color: 'var(--text-secondary)' }}>{istClock}</span>;
+}
+
 export function ChartsPage({
   mode,
   theme,
@@ -188,7 +210,6 @@ export function ChartsPage({
   const [trayTab, setTrayTab] = useState<'positions' | 'orders'>('positions');
   const [positions, setPositions] = useState<Awaited<ReturnType<typeof api.positions>>['positions']>([]);
   const [orders, setOrders] = useState<Awaited<ReturnType<typeof api.orders>>['orders']>([]);
-  const [istClock, setIstClock] = useState('');
 
   const activePane = panes[activePaneIdx] || panes[0];
 
@@ -213,23 +234,6 @@ export function ChartsPage({
   }, [drawingsByKey]);
 
   const drawingKeyForPane = (p: PaneConfig) => `${p.symbol.toUpperCase()}::${p.segment}`;
-
-  // Live IST Clock
-  useEffect(() => {
-    const tick = () => {
-      const str = new Intl.DateTimeFormat('en-GB', {
-        timeZone: 'Asia/Kolkata',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false,
-      }).format(new Date());
-      setIstClock(`${str} UTC+5:30`);
-    };
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, []);
 
   // Load saved layouts & F&O underlyings
   useEffect(() => {
@@ -1045,7 +1049,7 @@ export function ChartsPage({
           {visiblePaneIndices.map((idx) => {
             const p = panes[idx];
             const k = drawingKeyForPane(p);
-            const paneDrawings = drawingsByKey[k] || [];
+            const paneDrawings = drawingsByKey[k] || EMPTY_DRAWINGS;
             const paneHeight =
               gridMode === '1'
                 ? 540
@@ -1133,7 +1137,7 @@ export function ChartsPage({
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11.5 }}>
-            <span className="mono" style={{ color: 'var(--text-secondary)' }}>{istClock}</span>
+            <IstClockBadge />
             <span style={{ color: 'var(--border-strong)' }}>|</span>
             {(['percent', 'log', 'normal'] as const).map((sm) => (
               <button

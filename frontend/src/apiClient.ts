@@ -104,6 +104,86 @@ export function formatINR(value: string | number): string {
   return `${neg ? '-' : ''}₹${formattedInt}.${decPart}`;
 }
 
+export interface MergeableQuote {
+  instrumentId?: string;
+  symbol?: string;
+  exchange?: string;
+  segment?: string;
+  ltp?: string | null;
+  prevClose?: string | null;
+  open?: string | null;
+  high?: string | null;
+  low?: string | null;
+  change?: string | null;
+  changePercent?: string | null;
+  volume?: number | null;
+  vwap?: string | null;
+  openInterest?: number | null;
+  bidDepth?: Array<{ price: string; quantity: number; orders?: number }>;
+  askDepth?: Array<{ price: string; quantity: number; orders?: number }>;
+  freshness?: string;
+  timestamp?: string;
+}
+
+/**
+ * Merge an incoming REST or WebSocket quote packet into the existing quote snapshot
+ * without wiping valid prevClose, day change, OHLC, or depth fields on partial ticks.
+ */
+export function mergeNormalizedQuote<T extends MergeableQuote>(prev: T | null | undefined, incoming: T): T {
+  if (!prev) return incoming;
+
+  const ltpStr = incoming.ltp ?? prev.ltp ?? null;
+  const ltpNum = ltpStr != null ? Number(ltpStr) : NaN;
+
+  const inPc = incoming.prevClose != null ? Number(incoming.prevClose) : NaN;
+  const prevPc = prev.prevClose != null ? Number(prev.prevClose) : NaN;
+
+  const inDistinct = Number.isFinite(inPc) && inPc > 0 && (!Number.isFinite(ltpNum) || Math.abs(inPc - ltpNum) >= 0.001);
+  const prevDistinct = Number.isFinite(prevPc) && prevPc > 0 && (!Number.isFinite(ltpNum) || Math.abs(prevPc - ltpNum) >= 0.001);
+
+  let prevCloseStr: string | null = prev.prevClose ?? null;
+  if (inDistinct) {
+    prevCloseStr = incoming.prevClose ?? null;
+  } else if (prevDistinct) {
+    prevCloseStr = prev.prevClose ?? null;
+  } else if (Number.isFinite(inPc) && inPc > 0) {
+    prevCloseStr = incoming.prevClose ?? null;
+  }
+
+  let changeStr = incoming.change ?? prev.change ?? null;
+  let changePctStr = incoming.changePercent ?? prev.changePercent ?? null;
+
+  const pcNum = prevCloseStr != null ? Number(prevCloseStr) : NaN;
+  if (Number.isFinite(ltpNum) && ltpNum > 0 && Number.isFinite(pcNum) && pcNum > 0) {
+    const chg = ltpNum - pcNum;
+    const pct = (chg / pcNum) * 100;
+    changeStr = chg.toFixed(2);
+    changePctStr = pct.toFixed(2);
+  }
+
+  const pickPos = (nextVal?: string | null, oldVal?: string | null): string | null => {
+    const n = nextVal != null ? Number(nextVal) : NaN;
+    return Number.isFinite(n) && n > 0 ? nextVal! : (oldVal ?? null);
+  };
+
+  return {
+    ...prev,
+    ...incoming,
+    ltp: ltpStr,
+    prevClose: prevCloseStr,
+    open: pickPos(incoming.open, prev.open),
+    high: pickPos(incoming.high, prev.high),
+    low: pickPos(incoming.low, prev.low),
+    vwap: pickPos(incoming.vwap, prev.vwap),
+    volume: incoming.volume != null && incoming.volume > 0 ? incoming.volume : (prev.volume ?? incoming.volume ?? null),
+    openInterest: incoming.openInterest != null && incoming.openInterest > 0 ? incoming.openInterest : (prev.openInterest ?? incoming.openInterest ?? null),
+    bidDepth: incoming.bidDepth && incoming.bidDepth.length > 0 ? incoming.bidDepth : (prev.bidDepth ?? []),
+    askDepth: incoming.askDepth && incoming.askDepth.length > 0 ? incoming.askDepth : (prev.askDepth ?? []),
+    change: changeStr,
+    changePercent: changePctStr,
+  };
+}
+
 const RAW_API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/+$/, '');
 
 export const API_V1_BASE = RAW_API_BASE

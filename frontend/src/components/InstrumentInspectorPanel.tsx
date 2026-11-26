@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Activity, BarChart3, Layers, LineChart, RefreshCw, TrendingDown, TrendingUp, Zap } from 'lucide-react';
-import { api, formatINR } from '../apiClient';
+import { api, formatINR, getMarketWsUrl, mergeNormalizedQuote } from '../apiClient';
 
 export interface InspectorQuoteSnapshot {
   instrumentId?: string;
@@ -66,7 +66,22 @@ export function InstrumentInspectorPanel({
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    setLiveQuote(initialQuote);
+    const symUp = symbol?.toUpperCase();
+    const matchesTarget = (q: InspectorQuoteSnapshot | null | undefined) =>
+      Boolean(q && symUp && (q.symbol?.toUpperCase() === symUp || q.instrumentId?.toUpperCase() === symUp));
+
+    setLiveQuote((prev) => {
+      if (!initialQuote) return matchesTarget(prev) ? prev : null;
+      if (
+        prev &&
+        matchesTarget(prev) &&
+        (prev.symbol?.toUpperCase() === initialQuote.symbol?.toUpperCase() ||
+          (prev.instrumentId && prev.instrumentId === initialQuote.instrumentId))
+      ) {
+        return mergeNormalizedQuote(prev, initialQuote);
+      }
+      return initialQuote;
+    });
   }, [symbol, initialQuote]);
 
   const loadDetails = async (sym: string, showSpinner = false) => {
@@ -78,10 +93,10 @@ export function InstrumentInspectorPanel({
         api.siblingExchange(sym),
       ]);
       if (qRes.status === 'fulfilled' && qRes.value.quotes[0]) {
-        setLiveQuote(qRes.value.quotes[0]);
+        setLiveQuote((prev) => mergeNormalizedQuote(prev, qRes.value.quotes[0]));
       } else if (fRes.status === 'fulfilled' && fRes.value.quote) {
         const fq = fRes.value.quote;
-        setLiveQuote((prev) => ({ ...(prev || {}), symbol: sym, ...fq }));
+        setLiveQuote((prev) => mergeNormalizedQuote(prev, { symbol: sym, ...fq }));
       }
       if (fRes.status === 'fulfilled') {
         setFundamentals(fRes.value);
@@ -104,7 +119,29 @@ export function InstrumentInspectorPanel({
     const id = setInterval(() => {
       loadDetails(symbol, false);
     }, 4500);
-    return () => clearInterval(id);
+
+    const ws = new WebSocket(getMarketWsUrl());
+    ws.onopen = () => ws.send(JSON.stringify({ action: 'subscribe', symbols: [symbol] }));
+    ws.onmessage = (evt) => {
+      try {
+        const msg = JSON.parse(evt.data) as { type: string; data?: InspectorQuoteSnapshot };
+        const symUp = symbol.toUpperCase();
+        if (
+          msg.type === 'quote' &&
+          msg.data &&
+          (msg.data.symbol?.toUpperCase() === symUp || msg.data.instrumentId?.toUpperCase() === symUp)
+        ) {
+          setLiveQuote((prev) => mergeNormalizedQuote(prev, msg.data!));
+        }
+      } catch {
+        // ignore malformed frames
+      }
+    };
+
+    return () => {
+      clearInterval(id);
+      ws.close();
+    };
   }, [symbol]);
 
   if (!symbol) {
@@ -224,15 +261,17 @@ export function InstrumentInspectorPanel({
               style={{
                 fontSize: 12,
                 fontWeight: 700,
-                color: positive ? 'var(--gain)' : 'var(--loss)',
+                color: chg > 0 ? 'var(--gain)' : chg < 0 ? 'var(--loss)' : 'var(--text-secondary)',
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 4,
                 marginTop: 3,
               }}
             >
-              {positive ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
-              {chg >= 0 ? '+' : ''}{chg.toFixed(2)} ({chgPct >= 0 ? '+' : ''}{chgPct.toFixed(2)}%)
+              {chg >= 0 ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
+              {q?.change != null && q?.changePercent != null
+                ? `${chg >= 0 ? '+' : ''}${chg.toFixed(2)} (${chgPct >= 0 ? '+' : ''}${chgPct.toFixed(2)}%)`
+                : '—'}
             </div>
           </div>
 

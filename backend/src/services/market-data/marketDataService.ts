@@ -155,13 +155,87 @@ function unavailableQuote(symbol: string, inst?: MasterInstrument | null): Norma
   };
 }
 
+const IST_OFFSET_MS = 19_800_000;
+
+/**
+ * Determine true previous-session close from historical 1D OHLC bars.
+ * Handles market hours (today's bar present), post-close (today's bar present with close === LTP),
+ * weekends/holidays (last bar matches LTP, so prior session is bars[n-2]), and next morning pre-open.
+ */
+export function resolvePreviousSessionClose(
+  bars: CandleBar[],
+  ltp: number,
+  todayIstDate?: string
+): number | null {
+  if (!Array.isArray(bars) || bars.length === 0 || !Number.isFinite(ltp) || ltp <= 0) return null;
+  const valid = bars
+    .filter((b) => Number.isFinite(b.time) && Number.isFinite(b.close) && b.close > 0)
+    .sort((a, b) => a.time - b.time);
+  if (valid.length === 0) return null;
+
+  const refToday = todayIstDate || new Date(Date.now() + IST_OFFSET_MS).toISOString().slice(0, 10);
+  const lastBar = valid[valid.length - 1];
+  const lastDateIst = new Date(lastBar.time * 1000 + IST_OFFSET_MS).toISOString().slice(0, 10);
+
+  if (lastDateIst !== refToday && Math.abs(lastBar.close - ltp) >= 0.001) {
+    return lastBar.close;
+  }
+  if (valid.length >= 2) {
+    return valid[valid.length - 2].close;
+  }
+  return lastBar.open > 0 && Math.abs(lastBar.open - ltp) >= 0.001 ? lastBar.open : null;
+}
+
 class PrimaryMarketDataService implements MarketDataProvider {
   private dailyRefreshTimer: NodeJS.Timeout | null = null;
   private lastKnownQuotes = new Map<string, NormalizedQuote>();
+  private prevCloseById = new Map<string, number>();
+  private prevCloseBySymbol = new Map<string, number>();
   private lastQuoteFlushAt = 0;
 
   constructor() {
     this.loadLastKnownQuotes();
+  }
+
+  private recordTrustedPrevClose(inst: Pick<MasterInstrument, 'instrumentId' | 'symbol' | 'exchange' | 'instrumentKind'>, prevClose: number, ltp: number): void {
+    if (!Number.isFinite(prevClose) || prevClose <= 0) return;
+    if (Math.abs(ltp - prevClose) < 0.001) return;
+    this.prevCloseById.set(inst.instrumentId, prevClose);
+    if (inst.instrumentKind === 'INDEX' || inst.instrumentKind === 'EQUITY' || inst.instrumentKind === 'ETF') {
+      this.prevCloseBySymbol.set(`${inst.symbol.toUpperCase()}:${inst.exchange}`, prevClose);
+    }
+    liveFeed.seedPrevClose(inst.instrumentId, prevClose);
+  }
+
+  private resolveKnownPrevClose(inst: MasterInstrument, ltp: number): number | null {
+    const seeded = liveFeed.getSeededPrevClose(inst.instrumentId);
+    if (seeded != null && seeded > 0 && Math.abs(ltp - seeded) >= 0.001) return seeded;
+
+    const byId = this.prevCloseById.get(inst.instrumentId);
+    if (byId != null && byId > 0 && Math.abs(ltp - byId) >= 0.001) return byId;
+
+    if (inst.instrumentKind === 'INDEX' || inst.instrumentKind === 'EQUITY' || inst.instrumentKind === 'ETF') {
+      const bySym = this.prevCloseBySymbol.get(`${inst.symbol.toUpperCase()}:${inst.exchange}`);
+      if (bySym != null && bySym > 0 && Math.abs(ltp - bySym) >= 0.001 && Math.abs(ltp - bySym) / ltp < 0.25) {
+        return bySym;
+      }
+    }
+    return null;
+  }
+
+  private applyTruePrevClose(quote: NormalizedQuote, prevClose: number): NormalizedQuote {
+    const ltpNum = Number(quote.ltp);
+    if (!Number.isFinite(ltpNum) || ltpNum <= 0 || !Number.isFinite(prevClose) || prevClose <= 0) {
+      return quote;
+    }
+    const chg = ltpNum - prevClose;
+    const chgPct = (chg / prevClose) * 100;
+    return {
+      ...quote,
+      prevClose: prevClose.toFixed(2),
+      change: chg.toFixed(2),
+      changePercent: chgPct.toFixed(2),
+    };
   }
 
   private loadLastKnownQuotes(): void {
@@ -172,6 +246,15 @@ class PrimaryMarketDataService implements MarketDataProvider {
         for (const q of arr) {
           if (q?.instrumentId && q?.ltp) {
             this.lastKnownQuotes.set(q.instrumentId, { ...q, freshness: 'CACHED' });
+            const ltpNum = Number(q.ltp);
+            const pcNum = q.prevClose ? Number(q.prevClose) : null;
+            if (pcNum != null && pcNum > 0 && Number.isFinite(ltpNum) && Math.abs(ltpNum - pcNum) >= 0.001) {
+              this.prevCloseById.set(q.instrumentId, pcNum);
+              if (q.symbol && q.exchange) {
+                this.prevCloseBySymbol.set(`${q.symbol.toUpperCase()}:${q.exchange}`, pcNum);
+              }
+              liveFeed.seedPrevClose(q.instrumentId, pcNum);
+            }
           }
         }
       }
@@ -313,9 +396,16 @@ class PrimaryMarketDataService implements MarketDataProvider {
           const rawObj = segData?.[inst.providerSecId];
           const ohlc = (rawObj?.ohlc as Record<string, unknown> | undefined) || {};
           const rawLtp = numOrNull(rawObj?.last_price);
-          const prevClose = numOrNull(ohlc.close);
-          const ltp = rawLtp != null && rawLtp > 0 ? rawLtp : prevClose;
+          const rawPrevClose = positiveNumOrNull(ohlc.close);
+          const ltp = rawLtp != null && rawLtp > 0 ? rawLtp : rawPrevClose;
           if (!rawObj || ltp == null || ltp <= 0) continue;
+
+          let prevClose = rawPrevClose;
+          if (prevClose == null || Math.abs(ltp - prevClose) < 0.001) {
+            prevClose = this.resolveKnownPrevClose(inst, ltp) ?? prevClose;
+          } else {
+            this.recordTrustedPrevClose(inst, prevClose, ltp);
+          }
 
           const change = prevClose != null ? ltp - prevClose : null;
           const changePct = change != null && prevClose && prevClose > 0 ? (change / prevClose) * 100 : null;
@@ -391,10 +481,13 @@ class PrimaryMarketDataService implements MarketDataProvider {
               });
               if (!bars || bars.length === 0) return;
               const lastBar = bars[bars.length - 1];
-              const prevBar = bars.length >= 2 ? bars[bars.length - 2] : null;
-              const prevClose = prevBar ? prevBar.close : lastBar.open;
+              const resolvedPrev = resolvePreviousSessionClose(bars, lastBar.close, sess.istDate);
+              const prevClose = resolvedPrev ?? (bars.length >= 2 ? bars[bars.length - 2].close : lastBar.open);
               const ltp = lastBar.close;
               if (!ltp || ltp <= 0) return;
+              if (prevClose > 0 && Math.abs(ltp - prevClose) >= 0.001) {
+                this.recordTrustedPrevClose(inst, prevClose, ltp);
+              }
               const chg = prevClose > 0 ? ltp - prevClose : 0;
               const chgPct = prevClose > 0 ? (chg / prevClose) * 100 : 0;
               let w52H = lastBar.high;
@@ -439,18 +532,123 @@ class PrimaryMarketDataService implements MarketDataProvider {
       }
     }
 
-    return resolvedList.map(({ raw, inst }) => {
-      if (out.has(raw)) return out.get(raw)!;
-      if (inst) {
-        const fresh = marketCache.get<NormalizedQuote>(`quote:${inst.instrumentId}`);
-        if (fresh) return fresh;
-        const stale = liveFeed.getCachedQuote(inst.instrumentId);
-        if (stale && stale.ltp) return stale;
-        const persisted = this.lastKnownQuotes.get(inst.instrumentId);
-        if (persisted && persisted.ltp) return { ...persisted, freshness: 'CACHED' };
+    const finalQuotes: Array<{ inst: MasterInstrument | null; quote: NormalizedQuote }> = resolvedList.map(
+      ({ raw, inst }) => {
+        let quote: NormalizedQuote | undefined = out.get(raw);
+        if (!quote && inst) {
+          const fresh = marketCache.get<NormalizedQuote>(`quote:${inst.instrumentId}`);
+          if (fresh) quote = fresh;
+          else {
+            const stale = liveFeed.getCachedQuote(inst.instrumentId);
+            if (stale && stale.ltp) quote = stale;
+            else {
+              const persisted = this.lastKnownQuotes.get(inst.instrumentId);
+              if (persisted && persisted.ltp) quote = { ...persisted, freshness: 'CACHED' };
+            }
+          }
+        }
+        return { inst, quote: quote || unavailableQuote(raw, inst) };
       }
-      return unavailableQuote(raw, inst);
-    });
+    );
+
+    const sess = getMarketSession();
+    const todayIst = sess.istDate;
+    const ttlMs = sess.equityAndFno.isTradable || sess.commoditiesMcx.isTradable ? 5_000 : 60_000;
+    const uniqueHealTargets = new Map<string, { inst: MasterInstrument; ltp: number }>();
+    const needPrevCloseIndices: Array<{ idx: number; instrumentId: string }> = [];
+    let persistedHealed = false;
+
+    for (let i = 0; i < finalQuotes.length; i++) {
+      const { inst, quote } = finalQuotes[i];
+      if (!inst || !quote.ltp) continue;
+      const ltpNum = Number(quote.ltp);
+      if (!Number.isFinite(ltpNum) || ltpNum <= 0) continue;
+      const pcNum = quote.prevClose ? Number(quote.prevClose) : null;
+
+      if (pcNum != null && pcNum > 0 && Math.abs(ltpNum - pcNum) >= 0.001) {
+        this.recordTrustedPrevClose(inst, pcNum, ltpNum);
+        if (quote.change == null || quote.changePercent == null) {
+          const updated = this.applyTruePrevClose(quote, pcNum);
+          finalQuotes[i] = { inst, quote: updated };
+          marketCache.set(`quote:${inst.instrumentId}`, updated, ttlMs);
+          this.lastKnownQuotes.set(inst.instrumentId, updated);
+          persistedHealed = true;
+        }
+        continue;
+      }
+
+      const known = this.resolveKnownPrevClose(inst, ltpNum);
+      if (known != null) {
+        const updated = this.applyTruePrevClose(quote, known);
+        finalQuotes[i] = { inst, quote: updated };
+        liveFeed.seedPrevClose(inst.instrumentId, known);
+        marketCache.set(`quote:${inst.instrumentId}`, updated, ttlMs);
+        this.lastKnownQuotes.set(inst.instrumentId, updated);
+        persistedHealed = true;
+        continue;
+      }
+
+      if (
+        process.env.NODE_ENV !== 'test' &&
+        getTokenStatus().authenticated &&
+        !marketCache.get<boolean>(`prevclose_tried:${inst.instrumentId}`)
+      ) {
+        needPrevCloseIndices.push({ idx: i, instrumentId: inst.instrumentId });
+        if (!uniqueHealTargets.has(inst.instrumentId) && uniqueHealTargets.size < 20) {
+          uniqueHealTargets.set(inst.instrumentId, { inst, ltp: ltpNum });
+        }
+      }
+    }
+
+    if (uniqueHealTargets.size > 0) {
+      const fromStr = new Date(Date.now() - 15 * 86400 * 1000).toISOString().slice(0, 10);
+      const targets = [...uniqueHealTargets.values()];
+      const resolvedPrevById = new Map<string, number>();
+      const CONCURRENCY = 5;
+
+      for (let start = 0; start < targets.length; start += CONCURRENCY) {
+        const chunk = targets.slice(start, start + CONCURRENCY);
+        await Promise.all(
+          chunk.map(async ({ inst, ltp }) => {
+            marketCache.set(`prevclose_tried:${inst.instrumentId}`, true, 6 * 60 * 60 * 1000);
+            try {
+              const bars = await this.getCandles({
+                instrumentId: inst.instrumentId,
+                interval: '1D',
+                from: fromStr,
+                to: todayIst,
+              });
+              const truePrev = resolvePreviousSessionClose(bars, ltp, todayIst);
+              if (truePrev != null && truePrev > 0) {
+                resolvedPrevById.set(inst.instrumentId, truePrev);
+                this.recordTrustedPrevClose(inst, truePrev, ltp);
+              }
+            } catch {
+              // ignore individual 1D prev-close backfill errors
+            }
+          })
+        );
+      }
+
+      if (resolvedPrevById.size > 0) {
+        for (const { idx, instrumentId } of needPrevCloseIndices) {
+          const truePrev = resolvedPrevById.get(instrumentId);
+          if (truePrev != null) {
+            const updated = this.applyTruePrevClose(finalQuotes[idx].quote, truePrev);
+            finalQuotes[idx] = { inst: finalQuotes[idx].inst, quote: updated };
+            marketCache.set(`quote:${instrumentId}`, updated, ttlMs);
+            this.lastKnownQuotes.set(instrumentId, updated);
+            persistedHealed = true;
+          }
+        }
+      }
+    }
+
+    if (persistedHealed) {
+      this.saveLastKnownQuotesThrottled();
+    }
+
+    return finalQuotes.map((item) => item.quote);
   }
 
   public async getCandles(params: {

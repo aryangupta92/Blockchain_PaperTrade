@@ -6,7 +6,9 @@ import {
   decodeDepth20Packet,
   decodeStandardPacket,
   isValidTickPrice,
+  liveFeed,
 } from '../services/market-data/liveWebSocketFeed';
+import { resolvePreviousSessionClose } from '../services/market-data/marketDataService';
 import { getMarketSession } from '../services/market-data/marketSessionClock';
 
 describe('Phase 2 — Market Data Layer, Binary Decoders, Session Engine & Zero Provider Leakage', () => {
@@ -120,5 +122,56 @@ describe('Phase 2 — Market Data Layer, Binary Decoders, Session Engine & Zero 
     expect(containsProviderLeak(search.body)).toBe(false);
     expect(search.body).not.toContain('providerSecId');
     expect(search.json().count).toBeGreaterThan(0);
+  });
+
+  it('ignores zero IEEE754 floats in standard binary packets so prevClose is never wiped to 0', () => {
+    const qBuf = Buffer.alloc(50);
+    qBuf[0] = 4; // QUOTE
+    qBuf.writeUInt16LE(50, 1);
+    qBuf[3] = 1; // NSE_EQ
+    qBuf.writeUInt32LE(2885, 4);
+    qBuf.writeFloatLE(1396.2, 8);  // price
+    qBuf.writeFloatLE(0, 18);      // vwap = 0
+    qBuf.writeInt32LE(125000, 22); // volume
+    qBuf.writeFloatLE(0, 34);      // open = 0
+    qBuf.writeFloatLE(0, 38);      // prevClose = 0
+    qBuf.writeFloatLE(0, 42);      // high = 0
+    qBuf.writeFloatLE(0, 46);      // low = 0
+
+    const pkt = decodeStandardPacket(qBuf);
+    expect(pkt?.kind).toBe('quote');
+    expect(pkt?.price).toBeCloseTo(1396.2, 1);
+    expect(pkt?.prevClose).toBeUndefined();
+    expect(pkt?.open).toBeUndefined();
+    expect(pkt?.vwap).toBeUndefined();
+  });
+
+  it('stores and retrieves seeded previous-close prices via liveFeed.seedPrevClose', () => {
+    liveFeed.seedPrevClose('EQ:NSE_EQ:999999', 1373.9);
+    expect(liveFeed.getSeededPrevClose('EQ:NSE_EQ:999999')).toBeCloseTo(1373.9, 2);
+  });
+
+  it('resolves true previous-session close from 1D candles across market, post-close, weekend, and open', () => {
+    const tNov25 = Math.floor(Date.UTC(2026, 10, 25, 10, 0, 0) / 1000); // 15:30 IST Nov 25
+    const tNov26 = Math.floor(Date.UTC(2026, 10, 26, 10, 0, 0) / 1000); // 15:30 IST Nov 26
+    const tNov27 = Math.floor(Date.UTC(2026, 10, 27, 10, 0, 0) / 1000); // 15:30 IST Nov 27
+
+    const bars = [
+      { time: tNov25, open: 25750, high: 25820, low: 25710, close: 25800, volume: 100 },
+      { time: tNov26, open: 25810, high: 25900, low: 25790, close: 25884.5, volume: 120 },
+    ];
+
+    // Post-close same trading day (today's bar present, ltp === today's close): returns Nov 25 close
+    expect(resolvePreviousSessionClose(bars, 25884.5, '2026-11-26')).toBe(25800);
+
+    // Weekend (Saturday Nov 28) showing Friday Nov 27 close as LTP: returns Thursday Nov 26 close
+    const friBars = [
+      ...bars,
+      { time: tNov27, open: 25890, high: 25960, low: 25870, close: 25950, volume: 140 },
+    ];
+    expect(resolvePreviousSessionClose(friBars, 25950, '2026-11-28')).toBe(25884.5);
+
+    // Next morning pre-open/open (Monday Nov 30) before Monday daily bar exists, live LTP moved: returns Friday close
+    expect(resolvePreviousSessionClose(friBars, 26015, '2026-11-30')).toBe(25950);
   });
 });

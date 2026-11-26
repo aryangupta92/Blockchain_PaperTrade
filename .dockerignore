@@ -1,0 +1,17 @@
+node_modules/
+.git/
+.env
+.env.*
+!.env.example
+.vercel/
+*.db
+*.db-journal
+*.log
+backend/prisma/schema.generated.prisma
+backend/data/*.json
+backend/dist/
+frontend/dist/
+shared-engine/dist/
+ai-coach-training/
+docs/
+coverage/

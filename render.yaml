@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: blocktrade-api
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5100
+      - key: DATABASE_URL
+        value: file:./dev.db
+      - key: AI_COACH_PROVIDER
+        value: local-rag
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        generateValue: true
+      - key: WEB_ORIGIN
+        sync: false
+      - key: MARKET_DATA_CLIENT_ID
+        sync: false
+      - key: MARKET_DATA_API_KEY
+        sync: false
+      - key: MARKET_DATA_API_SECRET
+        sync: false
+      - key: MARKET_DATA_ACCESS_TOKEN
+        sync: false
+      - key: MARKET_DATA_PIN
+        sync: false
+      - key: MARKET_DATA_TOTP_SECRET
+        sync: false

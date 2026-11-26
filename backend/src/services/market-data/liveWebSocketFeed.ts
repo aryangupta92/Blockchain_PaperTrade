@@ -60,6 +60,10 @@ export function isValidTickPrice(price: number, prevClose?: number | null): bool
   return true;
 }
 
+function posFloat(v: number): number | undefined {
+  return Number.isFinite(v) && v > 0 ? v : undefined;
+}
+
 /** Decode little-endian binary market-feed packets cleanly. */
 export function decodeStandardPacket(buf: Buffer): {
   kind: string;
@@ -85,13 +89,13 @@ export function decodeStandardPacket(buf: Buffer): {
 
   switch (code) {
     case RESP_CODE.INDEX:
-      return buf.length >= 12 ? { kind: 'index', wireSegment, secId, price: buf.readFloatLE(8) } : null;
+      return buf.length >= 12 ? { kind: 'index', wireSegment, secId, price: posFloat(buf.readFloatLE(8)) } : null;
 
     case RESP_CODE.TICKER:
-      return buf.length >= 16 ? { kind: 'ticker', wireSegment, secId, price: buf.readFloatLE(8) } : null;
+      return buf.length >= 16 ? { kind: 'ticker', wireSegment, secId, price: posFloat(buf.readFloatLE(8)) } : null;
 
     case RESP_CODE.PREV_CLOSE:
-      return buf.length >= 16 ? { kind: 'prevClose', wireSegment, secId, prevClose: buf.readFloatLE(8) } : null;
+      return buf.length >= 16 ? { kind: 'prevClose', wireSegment, secId, prevClose: posFloat(buf.readFloatLE(8)) } : null;
 
     case RESP_CODE.OI:
       return buf.length >= 12 ? { kind: 'oi', wireSegment, secId, openInterest: buf.readInt32LE(8) } : null;
@@ -102,13 +106,13 @@ export function decodeStandardPacket(buf: Buffer): {
         kind: 'quote',
         wireSegment,
         secId,
-        price: buf.readFloatLE(8),
-        vwap: buf.readFloatLE(18),
+        price: posFloat(buf.readFloatLE(8)),
+        vwap: posFloat(buf.readFloatLE(18)),
         volume: buf.readInt32LE(22),
-        open: buf.readFloatLE(34),
-        prevClose: buf.readFloatLE(38),
-        high: buf.readFloatLE(42),
-        low: buf.readFloatLE(46),
+        open: posFloat(buf.readFloatLE(34)),
+        prevClose: posFloat(buf.readFloatLE(38)),
+        high: posFloat(buf.readFloatLE(42)),
+        low: posFloat(buf.readFloatLE(46)),
       };
 
     case RESP_CODE.FULL: {
@@ -132,14 +136,14 @@ export function decodeStandardPacket(buf: Buffer): {
         kind: 'full',
         wireSegment,
         secId,
-        price: buf.readFloatLE(8),
-        vwap: buf.readFloatLE(18),
+        price: posFloat(buf.readFloatLE(8)),
+        vwap: posFloat(buf.readFloatLE(18)),
         volume: buf.readInt32LE(22),
         openInterest: buf.readInt32LE(34),
-        open: buf.readFloatLE(46),
-        prevClose: buf.readFloatLE(50),
-        high: buf.readFloatLE(54),
-        low: buf.readFloatLE(58),
+        open: posFloat(buf.readFloatLE(46)),
+        prevClose: posFloat(buf.readFloatLE(50)),
+        high: posFloat(buf.readFloatLE(54)),
+        low: posFloat(buf.readFloatLE(58)),
         bidDepth,
         askDepth,
       };
@@ -196,11 +200,36 @@ class LiveMarketFeedManager {
   private lastTickAt: number | null = null;
 
   private readonly quotesById = new Map<string, NormalizedQuote>();
+  private readonly trustedPrevCloseById = new Map<string, number>();
   private readonly depth20ById = new Map<string, Depth20Update>();
   private readonly subscribedInstruments = new Map<string, { inst: MasterInstrument; mode: 'quote' | 'full' }>();
   private readonly depthSubscribed = new Map<string, MasterInstrument>();
   private readonly quoteListeners = new Set<QuoteListener>();
   private readonly depth20Listeners = new Set<Depth20Listener>();
+
+  /** Seed a verified previous-session close so live ticks always emit accurate day deltas. */
+  public seedPrevClose(instrumentId: string, prevClose: number): void {
+    if (!instrumentId || !Number.isFinite(prevClose) || prevClose <= 0) return;
+    this.trustedPrevCloseById.set(instrumentId, prevClose);
+    const existing = this.quotesById.get(instrumentId);
+    if (existing && existing.ltp) {
+      const ltpNum = Number(existing.ltp);
+      if (Number.isFinite(ltpNum) && ltpNum > 0) {
+        const chg = ltpNum - prevClose;
+        const chgPct = (chg / prevClose) * 100;
+        this.quotesById.set(instrumentId, {
+          ...existing,
+          prevClose: prevClose.toFixed(2),
+          change: chg.toFixed(2),
+          changePercent: chgPct.toFixed(2),
+        });
+      }
+    }
+  }
+
+  public getSeededPrevClose(instrumentId: string): number | null {
+    return this.trustedPrevCloseById.get(instrumentId) ?? null;
+  }
 
   public onQuote(cb: QuoteListener): () => void {
     this.quoteListeners.add(cb);
@@ -407,7 +436,25 @@ class LiveMarketFeedManager {
     if (!inst) return;
 
     const prev = this.quotesById.get(inst.instrumentId);
-    const prevCloseNum = pkt.prevClose ?? (prev?.prevClose ? Number(prev.prevClose) : null);
+    const ltpCandidate = pkt.price ?? (prev?.ltp ? Number(prev.ltp) : null);
+    const existingPrevClose = prev?.prevClose ? Number(prev.prevClose) : null;
+    const incomingPktPrevClose =
+      pkt.prevClose != null && Number.isFinite(pkt.prevClose) && pkt.prevClose > 0 ? pkt.prevClose : null;
+
+    const isDistinctFromLtp = (val: number | null): val is number =>
+      val != null && val > 0 && (ltpCandidate == null || Math.abs(val - ltpCandidate) >= 0.001);
+
+    if (isDistinctFromLtp(incomingPktPrevClose)) {
+      this.trustedPrevCloseById.set(inst.instrumentId, incomingPktPrevClose);
+    }
+
+    const seededPrevClose = this.trustedPrevCloseById.get(inst.instrumentId) ?? null;
+    const prevCloseNum =
+      (pkt.kind === 'prevClose' && isDistinctFromLtp(incomingPktPrevClose) ? incomingPktPrevClose : null) ??
+      (isDistinctFromLtp(incomingPktPrevClose) ? incomingPktPrevClose : null) ??
+      seededPrevClose ??
+      (existingPrevClose != null && existingPrevClose > 0 ? existingPrevClose : null) ??
+      incomingPktPrevClose;
 
     if (pkt.price !== undefined && !isValidTickPrice(pkt.price, prevCloseNum)) {
       return; // Drop bad print
@@ -418,6 +465,8 @@ class LiveMarketFeedManager {
       ltpNum != null && prevCloseNum != null && prevCloseNum > 0 ? ltpNum - prevCloseNum : null;
     const changePctNum =
       changeNum != null && prevCloseNum && prevCloseNum > 0 ? (changeNum / prevCloseNum) * 100 : null;
+
+    const validDepth = (d?: DepthLevel[]) => (d && d.some((lvl) => Number(lvl.price) > 0) ? d : undefined);
 
     const nowIso = new Date().toISOString();
     const quote: NormalizedQuote = {
@@ -432,11 +481,14 @@ class LiveMarketFeedManager {
       low: pkt.low != null ? pkt.low.toFixed(2) : (prev?.low ?? null),
       change: changeNum != null ? changeNum.toFixed(2) : null,
       changePercent: changePctNum != null ? changePctNum.toFixed(2) : null,
-      volume: pkt.volume ?? prev?.volume ?? null,
+      volume: pkt.volume != null && pkt.volume > 0 ? pkt.volume : (prev?.volume ?? pkt.volume ?? null),
       vwap: pkt.vwap != null ? pkt.vwap.toFixed(2) : (prev?.vwap ?? null),
-      openInterest: pkt.openInterest ?? prev?.openInterest ?? null,
-      bidDepth: pkt.bidDepth ?? prev?.bidDepth ?? [],
-      askDepth: pkt.askDepth ?? prev?.askDepth ?? [],
+      openInterest:
+        pkt.openInterest != null && pkt.openInterest > 0
+          ? pkt.openInterest
+          : (prev?.openInterest ?? pkt.openInterest ?? null),
+      bidDepth: validDepth(pkt.bidDepth) ?? prev?.bidDepth ?? [],
+      askDepth: validDepth(pkt.askDepth) ?? prev?.askDepth ?? [],
       freshness: 'LIVE',
       timestamp: nowIso,
     };

@@ -39,6 +39,7 @@ const EnableTotpBody = z.object({
 function resolveCookiePolicy(): { sameSite: 'Lax' | 'None' | 'Strict'; secure: boolean } {
   const env = getEnv();
   const isProd = env.NODE_ENV === 'production';
+  const isVercel = Boolean(process.env.VERCEL);
   const sameSite: 'Lax' | 'None' | 'Strict' =
     env.COOKIE_SAME_SITE === 'none'
       ? 'None'
@@ -46,10 +47,12 @@ function resolveCookiePolicy(): { sameSite: 'Lax' | 'None' | 'Strict'; secure: b
         ? 'Strict'
         : env.COOKIE_SAME_SITE === 'lax'
           ? 'Lax'
-          : isProd
-            ? 'None'
-            : 'Lax';
-  return { sameSite, secure: isProd || sameSite === 'None' };
+          : isVercel
+            ? 'Lax'
+            : isProd
+              ? 'None'
+              : 'Lax';
+  return { sameSite, secure: isProd || isVercel || sameSite === 'None' };
 }
 
 function setRefreshCookie(reply: FastifyReply, refreshToken: string) {

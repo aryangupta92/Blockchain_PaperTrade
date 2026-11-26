@@ -100,6 +100,7 @@ export function CommoditiesPage({ onTradeClick, onChartClick }: CommoditiesPageP
               <tbody>
                 {(data?.contracts || []).map((c) => {
                   const chg = c.change ? Number(c.change) : 0;
+                  const chgPct = c.changePercent ? Number(c.changePercent) : 0;
                   const color = chg > 0 ? 'var(--gain)' : chg < 0 ? 'var(--loss)' : 'var(--text-secondary)';
                   const selected = (selectedId || data?.contracts[0]?.instrumentId) === c.instrumentId;
                   return (
@@ -119,7 +120,11 @@ export function CommoditiesPage({ onTradeClick, onChartClick }: CommoditiesPageP
                       <td className="mono">{c.expiryDate ? c.expiryDate.slice(0, 10) : '—'}</td>
                       <td className="mono" style={{ textAlign: 'right' }}>{c.lotSize} / ₹{c.tickSize}</td>
                       <td className="mono" style={{ textAlign: 'right', fontWeight: 700 }}>{c.ltp ? formatINR(c.ltp) : '—'}</td>
-                      <td className="mono" style={{ textAlign: 'right', color }}>{c.changePercent ? `${chg >= 0 ? '+' : ''}${c.changePercent}%` : '—'}</td>
+                      <td className="mono" style={{ textAlign: 'right', color }}>
+                        {c.changePercent != null
+                          ? `${c.change != null ? `${chg >= 0 ? '+' : ''}${c.change} (` : ''}${chgPct >= 0 ? '+' : ''}${c.changePercent}%${c.change != null ? ')' : ''}`
+                          : '—'}
+                      </td>
                       <td className="mono" style={{ textAlign: 'right' }}>{c.openInterest != null ? c.openInterest.toLocaleString('en-IN') : '—'}</td>
                       <td onClick={(ev) => ev.stopPropagation()} style={{ display: 'flex', gap: 5 }}>
                         <button className="preset-btn" style={{ padding: '2px 7px', fontSize: 11 }} onClick={() => onChartClick(c.symbol, 'COMM')}>Chart</button>

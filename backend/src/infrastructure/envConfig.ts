@@ -68,11 +68,36 @@ export function getEnv(): AppEnv {
   return cachedEnv;
 }
 
+function normalizeOriginUrl(raw: string): string | null {
+  const trimmed = raw.trim().replace(/\/+$/, '');
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
 /**
- * Parses comma-separated WEB_ORIGIN entries into normalized origin strings.
+ * Returns the writable data directory for runtime caches (uses /tmp on Vercel Serverless).
+ */
+export function getRuntimeDataDir(): string {
+  if (process.env.DATA_DIR) return path.resolve(process.env.DATA_DIR);
+  if (process.env.VERCEL) return '/tmp/blocktrade-data';
+  return path.resolve(__dirname, '../../data');
+}
+
+/**
+ * Parses comma-separated WEB_ORIGIN entries plus Vercel deployment hosts into normalized origin strings.
  */
 export function getAllowedWebOrigins(env: AppEnv = getEnv()): string[] {
-  return env.WEB_ORIGIN.split(',')
-    .map((o) => o.trim().replace(/\/+$/, ''))
-    .filter(Boolean);
+  const candidates = [
+    ...env.WEB_ORIGIN.split(','),
+    process.env.VERCEL_URL || '',
+    process.env.VERCEL_PROJECT_PRODUCTION_URL || '',
+    process.env.VERCEL_BRANCH_URL || '',
+  ];
+  const out = new Set<string>();
+  for (const candidate of candidates) {
+    const normalized = normalizeOriginUrl(candidate);
+    if (normalized) out.add(normalized);
+  }
+  return [...out];
 }

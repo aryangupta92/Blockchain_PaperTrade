@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BarChart3, ChevronDown, ChevronRight, Layers, LineChart, Plus, Search, Trash2 } from 'lucide-react';
-import { api, getMarketWsUrl } from '../apiClient';
+import { api, getMarketWsUrl, mergeNormalizedQuote } from '../apiClient';
 
 const COLOR_MAP: Record<string, string> = {
   RED: '#ef4444',
@@ -15,6 +15,7 @@ const COLOR_KEYS = ['RED', 'ORANGE', 'YELLOW', 'GREEN', 'BLUE', 'PURPLE'] as con
 interface QuoteSnap {
   symbol: string;
   ltp: string | null;
+  prevClose?: string | null;
   change: string | null;
   changePercent: string | null;
   volume: number | null;
@@ -77,8 +78,9 @@ export function WatchlistDrawer({
         setQuotes((prev) => {
           const next = { ...prev };
           for (const q of res.quotes) {
-            next[q.symbol.toUpperCase()] = q;
-            if (q.ltp) prevLtpRef.current[q.symbol.toUpperCase()] = Number(q.ltp);
+            const sym = q.symbol.toUpperCase();
+            next[sym] = mergeNormalizedQuote(prev[sym], q);
+            if (next[sym].ltp) prevLtpRef.current[sym] = Number(next[sym].ltp);
           }
           return next;
         });
@@ -104,7 +106,7 @@ export function WatchlistDrawer({
             setTimeout(() => setFlashDir((f) => ({ ...f, [sym]: null })), 650);
           }
           if (newPx != null) prevLtpRef.current[sym] = newPx;
-          setQuotes((prev) => ({ ...prev, [sym]: msg.data }));
+          setQuotes((prev) => ({ ...prev, [sym]: mergeNormalizedQuote(prev[sym], msg.data) }));
         }
       } catch {
         // ignore
@@ -316,7 +318,6 @@ export function WatchlistDrawer({
                 items.map((item) => {
                   const symUp = item.symbol.toUpperCase();
                   const q = quotes[symUp];
-                  const chgPct = q?.changePercent ? Number(q.changePercent) : 0;
                   const flash = flashDir[symUp];
                   const isActive = activeSymbol.toUpperCase() === symUp;
 
@@ -358,9 +359,26 @@ export function WatchlistDrawer({
 
                       <div className="mono" style={{ textAlign: 'right' }}>
                         <div style={{ fontWeight: 700, fontSize: 12 }}>{q?.ltp ? Number(q.ltp).toFixed(2) : '—'}</div>
-                        <div style={{ fontSize: 10.5, color: chgPct >= 0 ? 'var(--gain)' : 'var(--loss)' }}>
-                          {q?.changePercent ? `${chgPct >= 0 ? '+' : ''}${q.changePercent}%` : '—'}
-                        </div>
+                        {(() => {
+                          const chgNum = q?.change != null ? Number(q.change) : null;
+                          const pctNum = q?.changePercent != null ? Number(q.changePercent) : null;
+                          const color =
+                            pctNum != null && pctNum > 0
+                              ? 'var(--gain)'
+                              : pctNum != null && pctNum < 0
+                                ? 'var(--loss)'
+                                : 'var(--text-secondary)';
+                          if (pctNum == null) {
+                            return <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>—</div>;
+                          }
+                          return (
+                            <div style={{ fontSize: 10.5, color }}>
+                              {chgNum != null ? `${chgNum >= 0 ? '+' : ''}${chgNum.toFixed(2)} (` : ''}
+                              {pctNum >= 0 ? '+' : ''}{pctNum.toFixed(2)}%
+                              {chgNum != null ? ')' : ''}
+                            </div>
+                          );
+                        })()}
                       </div>
 
                       {/* Hover Quick-Actions: [B][S][Chart][Depth][Chain] */}

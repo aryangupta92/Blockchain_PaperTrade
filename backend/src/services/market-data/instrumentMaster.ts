@@ -2,10 +2,11 @@ import fs from 'fs';
 import path from 'path';
 import axios from 'axios';
 import { ExchangeCode, InstrumentKind, MarketSegment } from '@broker/shared';
+import { getRuntimeDataDir } from '../../infrastructure/envConfig';
 
 // Internal upstream detailed scrip master CSV URL (32 cols: ISIN, MTF leverage, freeze qty, circuits, ASM/GSM; never exposed to users)
 const SCRIP_MASTER_CSV_URL = 'https://images.dhan.co/api-data/api-scrip-master-detailed.csv';
-const CACHE_PATH = path.resolve(__dirname, '../../../data/instrument_master.json');
+const CACHE_PATH = path.join(getRuntimeDataDir(), 'instrument_master.json');
 const MAX_CACHE_AGE_MS = 12 * 60 * 60 * 1000; // 12h
 
 export interface MasterInstrument {

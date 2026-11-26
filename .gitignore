@@ -6,9 +6,11 @@ coverage/
 .env.local
 .env.*.local
 !.env.example
+.vercel/
 *.log
 *.db
 *.db-journal
+backend/prisma/schema.generated.prisma
 backend/data/provider_token.json
 backend/data/instrument_master.json
 backend/data/last_quotes.json

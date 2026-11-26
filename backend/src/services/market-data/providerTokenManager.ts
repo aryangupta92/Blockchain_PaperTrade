@@ -1,13 +1,13 @@
 import fs from 'fs';
 import path from 'path';
 import axios from 'axios';
-import { getEnv } from '../../infrastructure/envConfig';
+import { getEnv, getRuntimeDataDir } from '../../infrastructure/envConfig';
 import { generateTotpCode } from '../../infrastructure/encryptionAndJwt';
 import { sanitizeUserMessage } from '../../infrastructure/providerAnonymizer';
 
 // Internal server-only upstream auth origin (NEVER exposed to UI or client APIs)
 const UPSTREAM_AUTH_BASE = 'https://auth.dhan.co';
-const TOKEN_CACHE_PATH = path.resolve(__dirname, '../../../data/provider_token.json');
+const TOKEN_CACHE_PATH = path.join(getRuntimeDataDir(), 'provider_token.json');
 
 interface StoredSessionToken {
   accessToken: string;
@@ -63,8 +63,12 @@ function readDiskToken(): StoredSessionToken | null {
 }
 
 function writeDiskToken(record: StoredSessionToken): void {
-  fs.mkdirSync(path.dirname(TOKEN_CACHE_PATH), { recursive: true });
-  fs.writeFileSync(TOKEN_CACHE_PATH, JSON.stringify(record, null, 2));
+  try {
+    fs.mkdirSync(path.dirname(TOKEN_CACHE_PATH), { recursive: true });
+    fs.writeFileSync(TOKEN_CACHE_PATH, JSON.stringify(record, null, 2));
+  } catch {
+    // Ignore read-only filesystem errors in stateless serverless runtimes
+  }
 }
 
 export function getActiveSessionToken(): {

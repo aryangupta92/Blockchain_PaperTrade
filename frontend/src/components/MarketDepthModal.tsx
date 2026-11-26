@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BarChart2, Layers, X } from 'lucide-react';
-import { api, formatINR, getMarketWsUrl } from '../apiClient';
+import { api, formatINR, getMarketWsUrl, mergeNormalizedQuote } from '../apiClient';
 
 interface DepthLevel {
   price: string;
@@ -23,7 +23,7 @@ export function MarketDepthModal({ symbol, segment, onClose, onSelectPrice }: Ma
 
   useEffect(() => {
     api.quotes([symbol]).then((res) => {
-      if (res.quotes[0]) setQuote(res.quotes[0]);
+      if (res.quotes[0]) setQuote((prev) => mergeNormalizedQuote(prev, res.quotes[0]));
     }).catch(() => {});
   }, [symbol]);
 
@@ -39,8 +39,13 @@ export function MarketDepthModal({ symbol, segment, onClose, onSelectPrice }: Ma
     ws.onmessage = (evt) => {
       try {
         const msg = JSON.parse(evt.data);
-        if (msg.type === 'quote' && msg.data?.symbol?.toUpperCase() === symbol.toUpperCase()) {
-          setQuote(msg.data);
+        const symUp = symbol.toUpperCase();
+        if (
+          msg.type === 'quote' &&
+          msg.data &&
+          (msg.data.symbol?.toUpperCase() === symUp || msg.data.instrumentId?.toUpperCase() === symUp)
+        ) {
+          setQuote((prev) => mergeNormalizedQuote(prev, msg.data));
         } else if (msg.type === 'depth20' && msg.data) {
           setDepth20({
             bids: (msg.data.bids || []).map((b: { price: number | string; quantity: number; orders: number }) => ({
@@ -86,11 +91,18 @@ export function MarketDepthModal({ symbol, segment, onClose, onSelectPrice }: Ma
             <span className="mono" style={{ fontSize: 15, fontWeight: 800 }}>
               {quote?.ltp ? formatINR(quote.ltp) : '—'}
             </span>
-            {quote?.changePercent && (
-              <span className="mono" style={{ fontSize: 12, color: Number(quote.changePercent) >= 0 ? 'var(--gain)' : 'var(--loss)' }}>
-                {Number(quote.changePercent) >= 0 ? '+' : ''}{quote.changePercent}%
-              </span>
-            )}
+            {quote?.changePercent != null && (() => {
+              const chg = quote.change != null ? Number(quote.change) : null;
+              const pct = Number(quote.changePercent);
+              const color = pct > 0 ? 'var(--gain)' : pct < 0 ? 'var(--loss)' : 'var(--text-secondary)';
+              return (
+                <span className="mono" style={{ fontSize: 12, color }}>
+                  {chg != null ? `${chg >= 0 ? '+' : ''}${quote.change} (` : ''}
+                  {pct >= 0 ? '+' : ''}{quote.changePercent}%
+                  {chg != null ? ')' : ''}
+                </span>
+              );
+            })()}
             <span className={`badge ${wsLive ? 'badge-gain' : 'badge-warn'}`}>{wsLive ? 'LIVE' : 'SNAPSHOT'}</span>
           </div>
           <div style={{ display: 'flex', gap: 6 }}>

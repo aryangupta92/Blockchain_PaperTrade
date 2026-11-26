@@ -89,6 +89,7 @@ export function EtfsPage({ onTradeClick, onChartClick }: EtfsPageProps) {
               <tbody>
                 {(data?.etfs || []).map((e) => {
                   const chg = e.change ? Number(e.change) : 0;
+                  const chgPct = e.changePercent ? Number(e.changePercent) : 0;
                   const color = chg > 0 ? 'var(--gain)' : chg < 0 ? 'var(--loss)' : 'var(--text-secondary)';
                   const selected = (selectedId || data?.etfs[0]?.instrumentId) === e.instrumentId;
                   return (
@@ -105,7 +106,11 @@ export function EtfsPage({ onTradeClick, onChartClick }: EtfsPageProps) {
                       <td><span className="badge">{e.category}</span></td>
                       <td className="mono">{e.exchange}</td>
                       <td className="mono" style={{ textAlign: 'right', fontWeight: 700 }}>{e.ltp ? formatINR(e.ltp) : '—'}</td>
-                      <td className="mono" style={{ textAlign: 'right', color }}>{e.changePercent ? `${chg >= 0 ? '+' : ''}${e.changePercent}%` : '—'}</td>
+                      <td className="mono" style={{ textAlign: 'right', color }}>
+                        {e.changePercent != null
+                          ? `${e.change != null ? `${chg >= 0 ? '+' : ''}${e.change} (` : ''}${chgPct >= 0 ? '+' : ''}${e.changePercent}%${e.change != null ? ')' : ''}`
+                          : '—'}
+                      </td>
                       <td className="mono" style={{ textAlign: 'right' }}>{e.volume != null ? e.volume.toLocaleString('en-IN') : '—'}</td>
                       <td onClick={(ev) => ev.stopPropagation()} style={{ display: 'flex', gap: 5 }}>
                         <button className="preset-btn" style={{ padding: '2px 7px', fontSize: 11 }} onClick={() => onChartClick(e.symbol, 'ETF')}>Chart</button>

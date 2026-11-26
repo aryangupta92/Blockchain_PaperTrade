@@ -7,11 +7,12 @@ import {
   ISeriesApi,
   LineStyle,
   Logical,
+  LogicalRange,
   PriceScaleMode,
   UTCTimestamp,
 } from 'lightweight-charts';
 import { BarChart2, FastForward, Pause, Play, RotateCcw, Search, X } from 'lucide-react';
-import { AccountMode, api, formatINR, getMarketWsUrl } from '../apiClient';
+import { AccountMode, api, formatINR, getMarketWsUrl, MergeableQuote, mergeNormalizedQuote } from '../apiClient';
 import {
   Bar,
   calcADX,
@@ -140,11 +141,21 @@ export function TradingChartPane({
   const extraOscContainerRef = useRef<HTMLDivElement | null>(null);
 
   const chartApiRef = useRef<IChartApi | null>(null);
+  const rsiChartRef = useRef<IChartApi | null>(null);
+  const macdChartRef = useRef<IChartApi | null>(null);
+  const extraOscChartRef = useRef<IChartApi | null>(null);
   const mainSeriesRef = useRef<ISeriesApi<'Candlestick' | 'Bar' | 'Line' | 'Area'> | null>(null);
+  const savedLogicalRangeRef = useRef<LogicalRange | null>(null);
+  const lastViewportKeyRef = useRef<string>('');
+  const syncingRangeRef = useRef(false);
+  const liveBarRef = useRef<Bar | null>(null);
+  const prevHaBarRef = useRef<Bar | null>(null);
 
   const [bars, setBars] = useState<Bar[]>([]);
   const [compareBars, setCompareBars] = useState<Bar[]>([]);
   const [liveLtp, setLiveLtp] = useState<string | null>(null);
+  const [liveQuote, setLiveQuote] = useState<MergeableQuote | null>(null);
+  const [liveBarOhlc, setLiveBarOhlc] = useState<{ o: number; h: number; l: number; c: number; v: number; oi?: number } | null>(null);
   const [hoverInfo, setHoverInfo] = useState<{ o: number; h: number; l: number; c: number; v: number; oi?: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -193,9 +204,16 @@ export function TradingChartPane({
 
   useEffect(() => {
     setRetryCount(0);
+    savedLogicalRangeRef.current = null;
+    lastViewportKeyRef.current = '';
+    liveBarRef.current = null;
+    prevHaBarRef.current = null;
+    setLiveBarOhlc(null);
+    setLiveQuote(null);
+    setLiveLtp(null);
   }, [symbol, interval]);
 
-  // 1. Fetch historical candles
+  // 1. Fetch historical candles + initial REST quote (day change & LTP)
   useEffect(() => {
     let active = true;
     setLoading(true);
@@ -214,7 +232,10 @@ export function TradingChartPane({
         }
         const sorted = [...byTime.values()].sort((a, b) => a.time - b.time);
         setBars(sorted);
-        if (sorted.length > 0) setLiveLtp(sorted[sorted.length - 1].close.toFixed(2));
+        liveBarRef.current = sorted.length > 0 ? { ...sorted[sorted.length - 1] } : null;
+        if (sorted.length > 0) {
+          setLiveLtp((prev) => prev ?? sorted[sorted.length - 1].close.toFixed(2));
+        }
       })
       .catch((e) => {
         if (!active) return;
@@ -224,6 +245,19 @@ export function TradingChartPane({
       .finally(() => {
         if (active) setLoading(false);
       });
+
+    api
+      .quotes([symbol])
+      .then((res) => {
+        if (!active || !res.quotes[0]) return;
+        const q = res.quotes[0];
+        setLiveQuote((prev) => mergeNormalizedQuote(prev, q));
+        if (q.ltp) {
+          const px = Number(q.ltp);
+          if (Number.isFinite(px) && px > 0) setLiveLtp(px.toFixed(2));
+        }
+      })
+      .catch(() => {});
 
     return () => { active = false; };
   }, [symbol, interval, reloadNonce]);
@@ -284,39 +318,77 @@ export function TradingChartPane({
     refreshChartOverlays();
   }, [refreshChartOverlays]);
 
-  // 4. Real-time WebSocket tick streaming updating right-most bar live
+  // 4. Real-time WebSocket tick streaming updating right-most bar & live quote without tearing down the chart
   useEffect(() => {
     if (replayIdx != null) return;
     const ws = new WebSocket(getMarketWsUrl());
     ws.onopen = () => ws.send(JSON.stringify({ action: 'subscribe', symbols: [symbol] }));
     ws.onmessage = (evt) => {
       try {
-        const msg = JSON.parse(evt.data) as { type: string; data?: { symbol?: string; ltp?: string | null } };
-        if (msg.type === 'quote' && msg.data?.ltp) {
+        const msg = JSON.parse(evt.data) as { type: string; data?: MergeableQuote };
+        if (msg.type === 'quote' && msg.data) {
+          const targetUp = symbol.toUpperCase();
+          const matchesSub =
+            (!msg.data.symbol && !msg.data.instrumentId) ||
+            msg.data.symbol?.toUpperCase() === targetUp ||
+            msg.data.instrumentId?.toUpperCase() === targetUp;
+          if (!matchesSub) return;
+          setLiveQuote((prev) => mergeNormalizedQuote(prev, msg.data!));
+          if (!msg.data.ltp) return;
           const px = Number(msg.data.ltp);
           if (!Number.isFinite(px) || px <= 0) return;
           setLiveLtp(px.toFixed(2));
-          setBars((prev) => {
-            if (prev.length === 0) return prev;
-            const last = prev[prev.length - 1];
-            const updated: Bar = { ...last, close: px, high: Math.max(last.high, px), low: Math.min(last.low, px) };
-            if (mainSeriesRef.current) {
-              try {
-                if (chartType === 'line' || chartType === 'area') {
-                  (mainSeriesRef.current as ISeriesApi<'Line'>).update({ time: updated.time as UTCTimestamp, value: updated.close });
-                } else {
-                  (mainSeriesRef.current as ISeriesApi<'Candlestick'>).update({
-                    time: updated.time as UTCTimestamp,
-                    open: updated.open,
-                    high: updated.high,
-                    low: updated.low,
-                    close: updated.close,
-                  });
-                }
-              } catch { /* ignore */ }
-            }
-            return [...prev.slice(0, -1), updated];
+
+          const cur =
+            liveBarRef.current ||
+            (visibleBarsRef.current.length > 0 ? { ...visibleBarsRef.current[visibleBarsRef.current.length - 1] } : null);
+          if (!cur) return;
+
+          const updated: Bar = {
+            ...cur,
+            close: px,
+            high: Math.max(cur.high, px),
+            low: Math.min(cur.low, px),
+          };
+          liveBarRef.current = updated;
+          setLiveBarOhlc({
+            o: updated.open,
+            h: updated.high,
+            l: updated.low,
+            c: updated.close,
+            v: updated.volume,
+            oi: updated.oi,
           });
+
+          if (mainSeriesRef.current) {
+            try {
+              if (chartType === 'line' || chartType === 'area') {
+                (mainSeriesRef.current as ISeriesApi<'Line'>).update({
+                  time: updated.time as UTCTimestamp,
+                  value: updated.close,
+                });
+              } else if (chartType === 'heikin_ashi') {
+                const haClose = (updated.open + updated.high + updated.low + updated.close) / 4;
+                const prevHa = prevHaBarRef.current;
+                const haOpen = prevHa ? (prevHa.open + prevHa.close) / 2 : (updated.open + updated.close) / 2;
+                (mainSeriesRef.current as ISeriesApi<'Candlestick'>).update({
+                  time: updated.time as UTCTimestamp,
+                  open: haOpen,
+                  high: Math.max(updated.high, haOpen, haClose),
+                  low: Math.min(updated.low, haOpen, haClose),
+                  close: haClose,
+                });
+              } else {
+                (mainSeriesRef.current as ISeriesApi<'Candlestick'>).update({
+                  time: updated.time as UTCTimestamp,
+                  open: updated.open,
+                  high: updated.high,
+                  low: updated.low,
+                  close: updated.close,
+                });
+              }
+            } catch { /* ignore */ }
+          }
         }
       } catch { /* ignore */ }
     };
@@ -379,6 +451,22 @@ export function TradingChartPane({
         vertLine: { color: 'rgba(148, 163, 184, 0.45)', style: LineStyle.Dashed },
         horzLine: { color: 'rgba(148, 163, 184, 0.45)', style: LineStyle.Dashed },
       },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: true,
+      },
+      handleScale: {
+        axisPressedMouseMove: { time: true, price: true },
+        axisDoubleClickReset: { time: true, price: true },
+        mouseWheel: true,
+        pinch: true,
+      },
+      kineticScroll: {
+        touch: true,
+        mouse: true,
+      },
       rightPriceScale: {
         borderColor: isDark ? '#1f2937' : '#cbd5e1',
         scaleMargins: { top: 0.08, bottom: 0.14 },
@@ -394,26 +482,44 @@ export function TradingChartPane({
         timeVisible: true,
         secondsVisible: false,
         rightOffset: 16,
-        barSpacing: 7,
+        barSpacing: 8,
+        minBarSpacing: 2,
+        shiftVisibleRangeOnNewBar: true,
+        fixLeftEdge: false,
+        fixRightEdge: false,
       },
     });
     chartApiRef.current = chart;
 
+    const effectiveVisibleBars =
+      replayIdx == null &&
+      liveBarRef.current &&
+      visibleBars.length > 0 &&
+      liveBarRef.current.time === visibleBars[visibleBars.length - 1].time
+        ? [...visibleBars.slice(0, -1), liveBarRef.current]
+        : visibleBars;
+    const effectiveDisplayBars =
+      chartType === 'heikin_ashi' ? calcHeikinAshi(effectiveVisibleBars) : effectiveVisibleBars;
+    prevHaBarRef.current =
+      chartType === 'heikin_ashi' && effectiveDisplayBars.length >= 2
+        ? effectiveDisplayBars[effectiveDisplayBars.length - 2]
+        : null;
+
     let mainSeries: ISeriesApi<'Candlestick' | 'Bar' | 'Line' | 'Area'>;
     if (chartType === 'line') {
       mainSeries = chart.addLineSeries({ color: '#38bdf8', lineWidth: 2 });
-      mainSeries.setData(displayBars.map((b) => ({ time: b.time as UTCTimestamp, value: b.close })));
+      mainSeries.setData(effectiveDisplayBars.map((b) => ({ time: b.time as UTCTimestamp, value: b.close })));
     } else if (chartType === 'area') {
       mainSeries = chart.addAreaSeries({ lineColor: '#38bdf8', topColor: 'rgba(56, 189, 248, 0.35)', bottomColor: 'rgba(56, 189, 248, 0.02)' });
-      mainSeries.setData(displayBars.map((b) => ({ time: b.time as UTCTimestamp, value: b.close })));
+      mainSeries.setData(effectiveDisplayBars.map((b) => ({ time: b.time as UTCTimestamp, value: b.close })));
     } else if (chartType === 'bars') {
       mainSeries = chart.addBarSeries({ upColor: '#10b981', downColor: '#ef4444' });
-      mainSeries.setData(displayBars.map((b) => ({ time: b.time as UTCTimestamp, open: b.open, high: b.high, low: b.low, close: b.close })));
+      mainSeries.setData(effectiveDisplayBars.map((b) => ({ time: b.time as UTCTimestamp, open: b.open, high: b.high, low: b.low, close: b.close })));
     } else {
       mainSeries = chart.addCandlestickSeries({
         upColor: '#10b981', downColor: '#ef4444', borderUpColor: '#10b981', borderDownColor: '#ef4444', wickUpColor: '#10b981', wickDownColor: '#ef4444',
       });
-      mainSeries.setData(displayBars.map((b) => ({ time: b.time as UTCTimestamp, open: b.open, high: b.high, low: b.low, close: b.close })));
+      mainSeries.setData(effectiveDisplayBars.map((b) => ({ time: b.time as UTCTimestamp, open: b.open, high: b.high, low: b.low, close: b.close })));
     }
     mainSeriesRef.current = mainSeries;
 
@@ -560,85 +666,211 @@ export function TradingChartPane({
       }
     }
 
-    chart.timeScale().fitContent();
-    const barByTime = new Map(visibleBars.map((b) => [b.time, b]));
+    const viewportKey = `${symbol}::${interval}::${replayIdx ?? 'live'}`;
+    if (effectiveDisplayBars.length > 0) {
+      if (savedLogicalRangeRef.current && lastViewportKeyRef.current === viewportKey) {
+        try {
+          chart.timeScale().setVisibleLogicalRange(savedLogicalRangeRef.current);
+        } catch {
+          chart.timeScale().fitContent();
+        }
+      } else {
+        if (effectiveDisplayBars.length > 100) {
+          chart.timeScale().setVisibleLogicalRange({
+            from: effectiveDisplayBars.length - 100,
+            to: effectiveDisplayBars.length + 10,
+          });
+        } else {
+          chart.timeScale().fitContent();
+        }
+        lastViewportKeyRef.current = viewportKey;
+        savedLogicalRangeRef.current = chart.timeScale().getVisibleLogicalRange();
+      }
+    } else {
+      chart.timeScale().fitContent();
+    }
+
+    const barByTime = new Map(effectiveVisibleBars.map((b) => [b.time, b]));
     chart.subscribeCrosshairMove((param) => {
-      if (!param.time) return;
-      const b = barByTime.get(Number(param.time));
+      if (!param.time) {
+        setHoverInfo(null);
+        return;
+      }
+      const t = Number(param.time);
+      const b = liveBarRef.current && liveBarRef.current.time === t ? liveBarRef.current : barByTime.get(t);
       if (b) setHoverInfo({ o: b.open, h: b.high, l: b.low, c: b.close, v: b.volume, oi: b.oi });
     });
-    chart.timeScale().subscribeVisibleLogicalRangeChange(() => setRenderTick((t) => t + 1));
+
+    let panRaf: number | null = null;
+    const handleMainRangeChange = (range: LogicalRange | null) => {
+      if (range) savedLogicalRangeRef.current = range;
+      if (range && !syncingRangeRef.current) {
+        syncingRangeRef.current = true;
+        try {
+          rsiChartRef.current?.timeScale().setVisibleLogicalRange(range);
+          macdChartRef.current?.timeScale().setVisibleLogicalRange(range);
+          extraOscChartRef.current?.timeScale().setVisibleLogicalRange(range);
+        } catch { /* ignore */ }
+        syncingRangeRef.current = false;
+      }
+      if (panRaf == null) {
+        panRaf = window.requestAnimationFrame(() => {
+          panRaf = null;
+          setRenderTick((t) => t + 1);
+        });
+      }
+    };
+    chart.timeScale().subscribeVisibleLogicalRangeChange(handleMainRangeChange);
 
     const ro = new ResizeObserver(() => {
       if (container.clientWidth > 0) {
         chart.applyOptions({ width: container.clientWidth });
-        setRenderTick((t) => t + 1);
+        if (panRaf == null) {
+          panRaf = window.requestAnimationFrame(() => {
+            panRaf = null;
+            setRenderTick((t) => t + 1);
+          });
+        }
       }
     });
     ro.observe(container);
     return () => {
+      try {
+        const currentRange = chart.timeScale().getVisibleLogicalRange();
+        if (currentRange) savedLogicalRangeRef.current = currentRange;
+      } catch { /* ignore */ }
+      if (panRaf != null) window.cancelAnimationFrame(panRaf);
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleMainRangeChange);
       ro.disconnect();
       chart.remove();
       chartApiRef.current = null;
       mainSeriesRef.current = null;
     };
-  }, [displayBars, visibleBars, compareBars, compareSymbol, chartType, scaleMode, indicators, theme, height, positionLine, restingOrders, drawings, hideDrawings]);
+  }, [displayBars, visibleBars, compareBars, compareSymbol, chartType, scaleMode, indicators, theme, height, positionLine, restingOrders, drawings, hideDrawings, symbol, interval, replayIdx]);
+
+  // Helper to create, bar-align, and bi-directionally sync oscillator sub-panes
+  const createSyncedSubPane = (
+    el: HTMLDivElement,
+    targetRef: { current: IChartApi | null }
+  ) => {
+    const isDark = theme === 'dark';
+    const c = createChart(el, {
+      width: Math.max(300, el.clientWidth),
+      height: 100,
+      layout: {
+        background: { type: ColorType.Solid, color: isDark ? '#0f1624' : '#ffffff' },
+        textColor: isDark ? '#94a3b8' : '#334155',
+      },
+      grid: {
+        vertLines: { color: isDark ? '#1a2438' : '#e2e8f0' },
+        horzLines: { color: isDark ? '#1a2438' : '#e2e8f0' },
+      },
+      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
+      handleScale: {
+        axisPressedMouseMove: { time: true, price: true },
+        axisDoubleClickReset: { time: true, price: true },
+        mouseWheel: true,
+        pinch: true,
+      },
+      kineticScroll: { touch: true, mouse: true },
+      timeScale: {
+        visible: false,
+        rightOffset: 16,
+        barSpacing: 8,
+        minBarSpacing: 2,
+        fixLeftEdge: false,
+        fixRightEdge: false,
+      },
+    });
+    targetRef.current = c;
+
+    const finalize = () => {
+      const initialRange = chartApiRef.current?.timeScale().getVisibleLogicalRange() || savedLogicalRangeRef.current;
+      if (initialRange) {
+        syncingRangeRef.current = true;
+        try { c.timeScale().setVisibleLogicalRange(initialRange); } catch { /* ignore */ }
+        syncingRangeRef.current = false;
+      } else {
+        c.timeScale().fitContent();
+      }
+      const onSubRangeChange = (range: LogicalRange | null) => {
+        if (!range || syncingRangeRef.current) return;
+        syncingRangeRef.current = true;
+        savedLogicalRangeRef.current = range;
+        try {
+          chartApiRef.current?.timeScale().setVisibleLogicalRange(range);
+          if (rsiChartRef.current && rsiChartRef.current !== c) rsiChartRef.current.timeScale().setVisibleLogicalRange(range);
+          if (macdChartRef.current && macdChartRef.current !== c) macdChartRef.current.timeScale().setVisibleLogicalRange(range);
+          if (extraOscChartRef.current && extraOscChartRef.current !== c) extraOscChartRef.current.timeScale().setVisibleLogicalRange(range);
+        } catch { /* ignore */ }
+        syncingRangeRef.current = false;
+      };
+      c.timeScale().subscribeVisibleLogicalRangeChange(onSubRangeChange);
+      const ro = new ResizeObserver(() => {
+        if (el.clientWidth > 0) c.applyOptions({ width: el.clientWidth });
+      });
+      ro.observe(el);
+      return () => {
+        ro.disconnect();
+        c.timeScale().unsubscribeVisibleLogicalRangeChange(onSubRangeChange);
+        c.remove();
+        if (targetRef.current === c) targetRef.current = null;
+      };
+    };
+
+    return { chart: c, finalize };
+  };
+
+  const alignPtsToBars = (pts: Array<{ time: number; value: number }>) => {
+    const map = new Map(pts.map((p) => [p.time, p.value]));
+    return visibleBars.map((b) => {
+      const val = map.get(b.time);
+      return val !== undefined ? { time: b.time as UTCTimestamp, value: val } : { time: b.time as UTCTimestamp };
+    });
+  };
 
   // 6. RSI Sub-pane
   useEffect(() => {
     if (!showRsi || !rsiContainerRef.current) return;
-    const isDark = theme === 'dark';
-    const c = createChart(rsiContainerRef.current, {
-      width: rsiContainerRef.current.clientWidth, height: 100,
-      layout: { background: { type: ColorType.Solid, color: isDark ? '#0f1624' : '#ffffff' }, textColor: isDark ? '#94a3b8' : '#334155' },
-      grid: { vertLines: { color: isDark ? '#1a2438' : '#e2e8f0' }, horzLines: { color: isDark ? '#1a2438' : '#e2e8f0' } },
-      timeScale: { visible: false },
-    });
+    const { chart: c, finalize } = createSyncedSubPane(rsiContainerRef.current, rsiChartRef);
     const s = c.addLineSeries({ color: '#c084fc', lineWidth: 2, title: 'RSI 14' });
-    s.setData(calcRSI(visibleBars, 14).map((p) => ({ time: p.time as UTCTimestamp, value: p.value })));
+    s.setData(alignPtsToBars(calcRSI(visibleBars, 14)));
     s.createPriceLine({ price: 70, color: 'rgba(239,68,68,0.5)', lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: false });
     s.createPriceLine({ price: 30, color: 'rgba(16,185,129,0.5)', lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: false });
-    c.timeScale().fitContent();
-    return () => c.remove();
+    return finalize();
   }, [showRsi, visibleBars, theme]);
 
   // 7. MACD Sub-pane
   useEffect(() => {
     if (!showMacd || !macdContainerRef.current) return;
-    const isDark = theme === 'dark';
-    const c = createChart(macdContainerRef.current, {
-      width: macdContainerRef.current.clientWidth, height: 100,
-      layout: { background: { type: ColorType.Solid, color: isDark ? '#0f1624' : '#ffffff' }, textColor: isDark ? '#94a3b8' : '#334155' },
-      grid: { vertLines: { color: isDark ? '#1a2438' : '#e2e8f0' }, horzLines: { color: isDark ? '#1a2438' : '#e2e8f0' } },
-      timeScale: { visible: false },
-    });
+    const { chart: c, finalize } = createSyncedSubPane(macdContainerRef.current, macdChartRef);
     const m = calcMACD(visibleBars, 12, 26, 9);
-    c.addHistogramSeries({}).setData(m.hist.map((p) => ({ time: p.time as UTCTimestamp, value: p.value, color: p.color })));
-    c.addLineSeries({ color: '#38bdf8', lineWidth: 1, title: 'MACD' }).setData(m.macd.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })));
-    c.addLineSeries({ color: '#f97316', lineWidth: 1, title: 'Signal' }).setData(m.signal.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })));
-    c.timeScale().fitContent();
-    return () => c.remove();
+    const histByTime = new Map(m.hist.map((p) => [p.time, p]));
+    c.addHistogramSeries({}).setData(
+      visibleBars.map((b) => {
+        const pt = histByTime.get(b.time);
+        return pt !== undefined
+          ? { time: b.time as UTCTimestamp, value: pt.value, color: pt.color }
+          : { time: b.time as UTCTimestamp };
+      })
+    );
+    c.addLineSeries({ color: '#38bdf8', lineWidth: 1, title: 'MACD' }).setData(alignPtsToBars(m.macd));
+    c.addLineSeries({ color: '#f97316', lineWidth: 1, title: 'Signal' }).setData(alignPtsToBars(m.signal));
+    return finalize();
   }, [showMacd, visibleBars, theme]);
 
   // 8. Additional Oscillator Sub-pane (ATR / StochRSI / ADX / CCI / OBV)
   useEffect(() => {
     if (!extraOsc || !extraOscContainerRef.current) return;
-    const isDark = theme === 'dark';
-    const c = createChart(extraOscContainerRef.current, {
-      width: extraOscContainerRef.current.clientWidth, height: 100,
-      layout: { background: { type: ColorType.Solid, color: isDark ? '#0f1624' : '#ffffff' }, textColor: isDark ? '#94a3b8' : '#334155' },
-      grid: { vertLines: { color: isDark ? '#1a2438' : '#e2e8f0' }, horzLines: { color: isDark ? '#1a2438' : '#e2e8f0' } },
-      timeScale: { visible: false },
-    });
+    const { chart: c, finalize } = createSyncedSubPane(extraOscContainerRef.current, extraOscChartRef);
     const data =
       extraOsc === 'ATR' ? calcATR(visibleBars, 14) :
         extraOsc === 'STOCHRSI' ? calcStochRSI(visibleBars, 14, 14) :
           extraOsc === 'ADX' ? calcADX(visibleBars, 14) :
             extraOsc === 'CCI' ? calcCCI(visibleBars, 20) :
               calcOBV(visibleBars);
-    c.addLineSeries({ color: '#38bdf8', lineWidth: 2, title: extraOsc }).setData(data.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })));
-    c.timeScale().fitContent();
-    return () => c.remove();
+    c.addLineSeries({ color: '#38bdf8', lineWidth: 2, title: extraOsc }).setData(alignPtsToBars(data));
+    return finalize();
   }, [extraOsc, visibleBars, theme]);
 
   // Drag-to-Modify release commits PUT /api/v1/orders/:id
@@ -812,11 +1044,21 @@ export function TradingChartPane({
   const isIndex = segment === 'FNO' && !symbol.includes('-') && ['NIFTY', 'BANKNIFTY', 'SENSEX', 'FINNIFTY', 'MIDCPNIFTY', 'INDIAVIX'].includes(symbol.toUpperCase());
   const latestBar = visibleBars[visibleBars.length - 1];
   const prevBar = visibleBars[visibleBars.length - 2];
-  const ohlcShown = hoverInfo || (latestBar ? { o: latestBar.open, h: latestBar.high, l: latestBar.low, c: latestBar.close, v: latestBar.volume, oi: latestBar.oi } : null);
+  const activeLatestBar =
+    !hoverInfo && liveBarOhlc
+      ? liveBarOhlc
+      : latestBar
+        ? { o: latestBar.open, h: latestBar.high, l: latestBar.low, c: latestBar.close, v: latestBar.volume, oi: latestBar.oi }
+        : null;
+  const ohlcShown = hoverInfo || activeLatestBar;
   const barRefPrev = prevBar ? prevBar.close : (ohlcShown?.o || 0);
   const barDelta = ohlcShown && barRefPrev > 0 ? ohlcShown.c - barRefPrev : 0;
   const barDeltaPct = ohlcShown && barRefPrev > 0 ? (barDelta / barRefPrev) * 100 : 0;
   const ohlcPos = barDelta >= 0;
+  const hasQuoteChange = liveQuote?.change != null && liveQuote?.changePercent != null;
+  const quoteChg = hasQuoteChange ? Number(liveQuote!.change) : 0;
+  const quoteChgPct = hasQuoteChange ? Number(liveQuote!.changePercent) : 0;
+  const quoteChgColor = quoteChg > 0 ? '#10b981' : quoteChg < 0 ? '#ef4444' : 'var(--text-secondary)';
 
   return (
     <div
@@ -901,6 +1143,11 @@ export function TradingChartPane({
             <span className="mono" style={{ fontSize: 13.5, fontWeight: 800 }}>
               {liveLtp ? formatINR(liveLtp) : '—'}
             </span>
+            {hasQuoteChange && (
+              <span className="mono" style={{ fontSize: 11.5, fontWeight: 700, color: quoteChgColor }}>
+                {quoteChg >= 0 ? '+' : ''}{quoteChg.toFixed(2)} ({quoteChgPct >= 0 ? '+' : ''}{quoteChgPct.toFixed(2)}%)
+              </span>
+            )}
 
             {ohlcShown && (
               <span className="mono" style={{ fontSize: 11, color: ohlcPos ? '#10b981' : '#ef4444' }}>
@@ -995,6 +1242,29 @@ export function TradingChartPane({
         </div>
 
         <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="preset-btn"
+            style={{ fontSize: 11, padding: '3px 7px' }}
+            title="Reset zoom and scroll to latest bars"
+            onClick={(e) => {
+              e.stopPropagation();
+              const chart = chartApiRef.current;
+              if (!chart) return;
+              chart.priceScale('right').applyOptions({ autoScale: true });
+              const len = visibleBarsRef.current.length;
+              if (len > 100) {
+                const target = { from: len - 100, to: len + 10 };
+                chart.timeScale().setVisibleLogicalRange(target);
+                savedLogicalRangeRef.current = chart.timeScale().getVisibleLogicalRange();
+              } else {
+                chart.timeScale().fitContent();
+                savedLogicalRangeRef.current = chart.timeScale().getVisibleLogicalRange();
+              }
+            }}
+          >
+            Reset View
+          </button>
           <button
             type="button"
             className="preset-btn"
